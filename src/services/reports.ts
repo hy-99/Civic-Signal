@@ -47,7 +47,7 @@ async function recalculateReportScoreInState(state: Awaited<ReturnType<typeof lo
   const relatedSignals = state.public_signals.filter(
     (signal) =>
       signal.category === report.category ||
-      signal.cluster_id === report.cluster_id ||
+      (report.cluster_id !== null && signal.cluster_id === report.cluster_id) ||
       (signal.latitude !== null &&
         signal.longitude !== null &&
         Math.abs(signal.latitude - report.latitude) < 0.01 &&
@@ -79,8 +79,8 @@ async function recalculateReportScoreInState(state: Awaited<ReturnType<typeof lo
 function buildReportView(state: Awaited<ReturnType<typeof loadState>>, report: Report): ReportCardView {
   const cluster = report.cluster_id ? state.risk_clusters.find((item) => item.id === report.cluster_id) || null : null;
   const profile = state.profiles.find((item) => item.id === report.user_id) || null;
-  const relatedSignals = state.public_signals.filter((signal) => signal.cluster_id === report.cluster_id);
-  const relatedReports = state.reports.filter((candidate) => candidate.cluster_id === report.cluster_id && candidate.id !== report.id);
+  const relatedSignals = report.cluster_id ? state.public_signals.filter((signal) => signal.cluster_id === report.cluster_id) : [];
+  const relatedReports = report.cluster_id ? state.reports.filter((candidate) => candidate.cluster_id === report.cluster_id && candidate.id !== report.id) : [];
   return {
     ...report,
     confidence_label: report.analysis_json.score_breakdown.confidence_label,

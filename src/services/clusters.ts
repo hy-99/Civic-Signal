@@ -406,6 +406,9 @@ export async function splitCluster(cluster_id: string) {
     if (items.length <= 1) return source;
 
     const [, ...rest] = items;
+    const restItemIds = new Set(rest.map((item) => item.id));
+    state.cluster_items = state.cluster_items.filter((item) => !restItemIds.has(item.id));
+
     for (const item of rest) {
       if (item.item_type === "report") {
         const report = state.reports.find((entry) => entry.id === item.item_id);

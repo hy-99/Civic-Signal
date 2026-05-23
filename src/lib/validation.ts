@@ -24,7 +24,7 @@ export const reportCreateSchema = z.object({
   address_text: z.string().max(160).optional().nullable(),
   latitude: z.number().min(-90).max(90).optional().nullable(),
   longitude: z.number().min(-180).max(180).optional().nullable(),
-  image_url: z.string().url().optional().nullable(),
+  image_url: z.string().optional().nullable(),
   image_storage_path: z.string().optional().nullable(),
   is_anonymous: z.boolean().default(false),
   agreed_to_accuracy: z.literal(true),

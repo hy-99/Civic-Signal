@@ -16,8 +16,8 @@ export default async function SubmitPage() {
 
   return (
     <CommandCenter clusters={clusters} reports={reports} submitMode>
-      <section className="max-h-[calc(100vh-88px)] w-full max-w-[650px] overflow-hidden rounded-2xl bg-white shadow-[0_36px_90px_rgba(15,23,42,0.35)]">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <section className="flex max-h-[calc(100vh-88px)] w-full max-w-[650px] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_36px_90px_rgba(15,23,42,0.35)]">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">Incident entry panel</p>
             <h1 className="mt-1 text-2xl font-black tracking-[-0.04em] text-slate-950">Log a local hazard</h1>
@@ -27,9 +27,7 @@ export default async function SubmitPage() {
             <X className="h-5 w-5" />
           </Link>
         </div>
-        <div className="civic-scrollbar max-h-[calc(100vh-210px)] overflow-y-auto px-5 py-5">
-          <ReportForm />
-        </div>
+        <ReportForm />
       </section>
     </CommandCenter>
   );
