@@ -27,7 +27,7 @@ const useCases = [
   "Crowd safety",
 ];
 
-const LANDING_EXIT_MS = 760;
+const LANDING_EXIT_MS = 920;
 
 type LaunchPhase = "idle" | "exiting" | "overlay";
 

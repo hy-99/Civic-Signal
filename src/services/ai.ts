@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
+import { DEMO_IMAGE_DIR } from "@/lib/constants";
 import { hasOpenAIConfig } from "@/lib/env";
 import { withMutableState } from "@/lib/data-store";
-import type { AiCacheEntry, PublicSignal, Report, RiskCluster } from "@/lib/types";
-import { createId, nowIso } from "@/lib/utils";
+import type { AiCacheEntry, EvidenceReview, PublicSignal, Report, RiskCluster } from "@/lib/types";
+import { createId, getFileExtension, nowIso } from "@/lib/utils";
 
 function hashInput(input: unknown) {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
@@ -99,6 +102,89 @@ async function callOpenAI(task_type: string, input: Record<string, unknown>) {
   }
 }
 
+function extensionToMime(filename: string | null | undefined) {
+  const extension = getFileExtension(filename || "image.webp");
+  if (extension === "png") return "image/png";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  return "image/webp";
+}
+
+async function readEvidenceImageAsDataUrl(image_storage_path: string | null | undefined) {
+  if (!image_storage_path) return null;
+  try {
+    const filePath = path.join(process.cwd(), DEMO_IMAGE_DIR, image_storage_path);
+    const buffer = await fs.readFile(filePath);
+    return `data:${extensionToMime(image_storage_path)};base64,${buffer.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeEvidenceReview(value: Record<string, unknown> | null, fallback: EvidenceReview): EvidenceReview {
+  if (!value) return fallback;
+  const status = ["matches", "unclear", "mismatch", "not_provided"].includes(String(value.status))
+    ? (value.status as EvidenceReview["status"])
+    : fallback.status;
+  return {
+    status,
+    match_score: typeof value.match_score === "number" ? Math.max(0, Math.min(100, Math.round(value.match_score))) : fallback.match_score,
+    issue_likelihood:
+      typeof value.issue_likelihood === "number" ? Math.max(0, Math.min(100, Math.round(value.issue_likelihood))) : fallback.issue_likelihood,
+    summary: typeof value.summary === "string" && value.summary.trim() ? value.summary.slice(0, 260) : fallback.summary,
+    flags: Array.isArray(value.flags) ? value.flags.filter((flag): flag is string => typeof flag === "string").slice(0, 5) : fallback.flags,
+    method: value.method === "vision_ai" ? "vision_ai" : fallback.method,
+    checked_at: nowIso(),
+  };
+}
+
+async function callOpenAIWithImage(task_type: string, input: Record<string, unknown>, imageUrl: string) {
+  if (!hasOpenAIConfig()) return null;
+  const cache_key = `${task_type}:${hashInput({ ...input, imageUrl })}`;
+  const cached = await getCachedAIResult(cache_key);
+  if (cached) return cached.output_json;
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        input: [
+          {
+            role: "system",
+            content: [
+              {
+                type: "input_text",
+                text:
+                  "You verify civic hazard evidence. Compare the image with the title, description, and category. Return compact JSON only with status, match_score, issue_likelihood, summary, and flags. Never identify private people.",
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: JSON.stringify(input) },
+              { type: "input_image", image_url: imageUrl },
+            ],
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { output_text?: string };
+    if (!payload.output_text) return null;
+    const parsed = JSON.parse(payload.output_text) as Record<string, unknown>;
+    await saveAIResult(cache_key, task_type, parsed);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export async function analyzeReportText(report: Pick<Report, "title" | "description" | "category" | "address_text">) {
   const fallback = {
     category: report.category,
@@ -112,6 +198,44 @@ export async function analyzeReportText(report: Pick<Report, "title" | "descript
   };
 
   return (await callOpenAI("analyze_report_text", report)) || fallback;
+}
+
+export async function analyzeReportEvidence(input: Pick<Report, "title" | "description" | "category" | "image_url" | "image_storage_path">) {
+  const hasImage = Boolean(input.image_url || input.image_storage_path);
+  const fallback: EvidenceReview = {
+    status: hasImage ? "unclear" : "not_provided",
+    match_score: hasImage ? 55 : 0,
+    issue_likelihood: hasImage ? 55 : 0,
+    summary: hasImage
+      ? "Image evidence was uploaded. Vision AI can verify visual match when OPENAI_API_KEY is configured; the local fallback confirms evidence exists but cannot inspect image content."
+      : "No image evidence was uploaded for this report.",
+    flags: hasImage ? ["vision_review_unavailable"] : ["no_image"],
+    method: hasImage ? "local_heuristic" : "not_available",
+    checked_at: nowIso(),
+  };
+
+  if (!hasImage) return fallback;
+
+  const imageDataUrl = await readEvidenceImageAsDataUrl(input.image_storage_path);
+  const imageUrl = imageDataUrl || (input.image_url?.startsWith("http") ? input.image_url : null);
+  if (!imageUrl) return fallback;
+
+  const result = await callOpenAIWithImage(
+    "verify_report_evidence",
+    {
+      title: input.title,
+      description: input.description,
+      category: input.category,
+      requested_checks: [
+        "Does the image visually match the report title and description?",
+        "Does the image show a real public-space hazard or civic issue?",
+        "Are there reasons to reduce confidence?",
+      ],
+    },
+    imageUrl,
+  );
+
+  return normalizeEvidenceReview(result, fallback);
 }
 
 export async function classifyPublicSignal(signal: Pick<PublicSignal, "title" | "text" | "category" | "source_name">) {

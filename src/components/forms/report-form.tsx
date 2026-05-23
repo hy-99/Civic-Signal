@@ -47,13 +47,15 @@ export function ReportForm() {
   });
 
   const { errors } = form.formState;
-
   const latitudeValue = useWatch({ control: form.control, name: "latitude" });
   const longitudeValue = useWatch({ control: form.control, name: "longitude" });
   const urgencyValue = useWatch({ control: form.control, name: "urgency" });
   const descriptionValue = useWatch({ control: form.control, name: "description" });
 
   const selectedUrgency = URGENCY_OPTIONS.find((option) => option.value === urgencyValue) || URGENCY_OPTIONS[1];
+  const validationMessages = Object.values(errors)
+    .map((item) => item?.message)
+    .filter((message): message is string => Boolean(message));
 
   useEffect(() => {
     if (submitRef.current) submitRef.current.dataset.civicClientReady = "true";
@@ -62,8 +64,8 @@ export function ReportForm() {
   const useCurrentLocation = () => {
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        form.setValue("latitude", position.coords.latitude);
-        form.setValue("longitude", position.coords.longitude);
+        form.setValue("latitude", position.coords.latitude, { shouldDirty: true, shouldValidate: true });
+        form.setValue("longitude", position.coords.longitude, { shouldDirty: true, shouldValidate: true });
       },
       () => setServerError("Location permission denied."),
     );
@@ -71,49 +73,56 @@ export function ReportForm() {
 
   const onSubmit = form.handleSubmit(async (values) => {
     setServerError("");
-    let uploadResult: { image_url: string; image_storage_path: string } | null = null;
 
-    if (selectedFile) {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      const uploadResponse = await fetch("/api/upload/report-image", {
+    try {
+      let uploadResult: { image_url: string; image_storage_path: string } | null = null;
+
+      if (selectedFile) {
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+        const uploadResponse = await fetch("/api/upload/report-image", {
+          method: "POST",
+          body: formData,
+        });
+        const uploadPayload = (await uploadResponse.json()) as {
+          ok: boolean;
+          data?: { image_url: string; image_storage_path: string };
+          error?: string;
+        };
+
+        if (!uploadResponse.ok || !uploadPayload.ok || !uploadPayload.data) {
+          setServerError(uploadPayload.error || "Upload failed.");
+          return;
+        }
+
+        uploadResult = uploadPayload.data;
+      }
+
+      const response = await fetch("/api/reports", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...values,
+          image_url: uploadResult?.image_url || null,
+          image_storage_path: uploadResult?.image_storage_path || null,
+        }),
       });
-      const uploadPayload = (await uploadResponse.json()) as {
-        ok: boolean;
-        data?: { image_url: string; image_storage_path: string };
-        error?: string;
-      };
-      if (!uploadPayload.ok || !uploadPayload.data) {
-        setServerError(uploadPayload.error || "Upload failed.");
+      const payload = (await response.json()) as { ok: boolean; data?: ReportCardView; error?: string };
+
+      if (!response.ok || !payload.ok || !payload.data) {
+        setServerError(payload.error || "Report submit failed.");
         return;
       }
-      uploadResult = uploadPayload.data;
-    }
 
-    const response = await fetch("/api/reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...values,
-        image_url: uploadResult?.image_url || null,
-        image_storage_path: uploadResult?.image_storage_path || null,
-      }),
-    });
-    const payload = (await response.json()) as { ok: boolean; data?: ReportCardView; error?: string };
-    if (!payload.ok || !payload.data) {
-      setServerError(payload.error || "Report submit failed.");
-      return;
+      router.push(`/app/reports/${payload.data.id}`);
+      router.refresh();
+    } catch (submitError) {
+      setServerError(submitError instanceof Error ? submitError.message : "Report submit failed. Please try again.");
     }
-
-    // Navigate to the new report — this closes the modal naturally.
-    router.push(`/app/reports/${payload.data.id}`);
   });
 
   return (
     <form className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
-      {/* Scrollable field body */}
       <div className="civic-scrollbar min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="grid gap-4">
           <div className="grid gap-1.5">
@@ -169,7 +178,7 @@ export function ReportForm() {
                 <p className="mt-1 text-sm text-slate-600">
                   {typeof latitudeValue === "number" && typeof longitudeValue === "number"
                     ? `Coordinates captured: ${latitudeValue.toFixed(4)}, ${longitudeValue.toFixed(4)}`
-                    : "Add an address above, or use your current location."}
+                    : "Add an address above, use your current location, or enter coordinates manually."}
                 </p>
               </div>
             </div>
@@ -203,7 +212,7 @@ export function ReportForm() {
 
             <Field
               label="Photo or Screenshot Evidence"
-              help="Images only. Add a clear photo or screenshot of the hazard."
+              help="Images only. AI evidence review compares the image against your title and description."
               labelClassName={labelClassName}
               helpClassName={helpClassName}
             >
@@ -211,7 +220,7 @@ export function ReportForm() {
                 <Upload className="h-6 w-6 text-blue-700" />
                 <p className="mt-2 text-sm font-semibold text-slate-950">{selectedFile ? selectedFile.name : "Upload image"}</p>
                 <p className="mt-1 text-xs text-slate-500">
-                  {selectedFile ? "File ready." : "PNG, JPG, WEBP."}
+                  {selectedFile ? "File ready for evidence review." : "PNG, JPG, WEBP."}
                 </p>
                 <input
                   type="file"
@@ -232,7 +241,7 @@ export function ReportForm() {
                   type="number"
                   step="any"
                   value={latitudeValue ?? ""}
-                  onChange={(event) => form.setValue("latitude", event.target.value ? Number(event.target.value) : null)}
+                  onChange={(event) => form.setValue("latitude", event.target.value ? Number(event.target.value) : null, { shouldDirty: true, shouldValidate: true })}
                 />
               </Field>
               <Field label="Longitude" labelClassName={labelClassName} helpClassName={helpClassName}>
@@ -241,7 +250,7 @@ export function ReportForm() {
                   type="number"
                   step="any"
                   value={longitudeValue ?? ""}
-                  onChange={(event) => form.setValue("longitude", event.target.value ? Number(event.target.value) : null)}
+                  onChange={(event) => form.setValue("longitude", event.target.value ? Number(event.target.value) : null, { shouldDirty: true, shouldValidate: true })}
                 />
               </Field>
             </div>
@@ -264,14 +273,23 @@ export function ReportForm() {
           <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-[#edf5ff] px-3 py-2.5">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
             <p className="text-xs leading-5 text-slate-600">
-              CivicSignal validates, scores, checks moderation, and links this place-based report into the live risk map.
+              CivicSignal validates, scores, checks moderation, runs evidence review when an image is attached, and links this place-based report into the live risk map.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Fixed footer — always visible, never scrolls away */}
       <div className="shrink-0 border-t border-slate-200 bg-white px-5 py-3">
+        {validationMessages.length ? (
+          <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            <p className="font-bold">Fix these before submitting:</p>
+            <ul className="mt-1 list-inside list-disc">
+              {validationMessages.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {serverError ? (
           <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{serverError}</p>
         ) : null}
@@ -283,10 +301,10 @@ export function ReportForm() {
             data-civic-client-ready="false"
             className="rounded-xl bg-[#2653da] px-6 py-3 text-white hover:bg-[#1f48c4]"
           >
-            {form.formState.isSubmitting ? "Submitting…" : "Submit Report"}
+            {form.formState.isSubmitting ? "Submitting..." : "Submit Report"}
           </Button>
           <p className="text-xs leading-5 text-slate-500">
-            Email stays private. Visibility depends on confidence and moderation status.
+            Email stays private. Public visibility depends on confidence and moderation status.
           </p>
         </div>
       </div>

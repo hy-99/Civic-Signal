@@ -47,7 +47,7 @@ export async function getSystemAnalytics(): Promise<SystemAnalytics> {
 
     return {
       total_reports: state.reports.length,
-      active_reports: state.reports.filter((report) => ["active", "verified", "needs_review"].includes(report.status)).length,
+      active_reports: state.reports.filter((report) => ["active", "verified", "in_progress", "needs_review"].includes(report.status)).length,
       resolved_reports: resolved.length,
       false_alarm_rate: state.reports.length ? Number(((falseAlarms.length / state.reports.length) * 100).toFixed(1)) : 0,
       average_resolution_time_hours: Number(avgResolutionHours.toFixed(1)),

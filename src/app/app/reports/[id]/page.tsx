@@ -36,6 +36,13 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
         <EvidenceCard title="Evidence" body={report.description} meta={`Submitted by ${report.display_name}`} />
         <ActionPlanCard text={report.analysis_json.score_breakdown.recommended_action} />
       </div>
+      {report.analysis_json.evidence_review ? (
+        <EvidenceCard
+          title="AI Evidence Review"
+          body={report.analysis_json.evidence_review.summary}
+          meta={`Image/report match ${report.analysis_json.evidence_review.match_score}/100 • Issue likelihood ${report.analysis_json.evidence_review.issue_likelihood}/100 • ${report.analysis_json.evidence_review.method.replace(/_/g, " ")}`}
+        />
+      ) : null}
       <ScoreBreakdown score={report.analysis_json.score_breakdown} />
       <VerificationButtons entity="report" entity_id={report.id} />
       {report.cluster ? (

@@ -15,7 +15,7 @@ for update using (auth.uid() = id)
 with check (auth.uid() = id);
 
 create policy "reports_public_read" on reports
-for select using (status in ('active', 'verified', 'resolved'));
+for select using (status in ('active', 'verified', 'in_progress', 'resolved'));
 
 create policy "reports_owner_read" on reports
 for select using (auth.uid() = user_id);
@@ -31,7 +31,7 @@ create policy "signals_public_read" on public_signals
 for select using (status in ('matched'));
 
 create policy "clusters_public_read" on risk_clusters
-for select using (status in ('active', 'monitoring', 'urgent', 'resolved'));
+for select using (status in ('active', 'monitoring', 'urgent', 'in_progress', 'resolved'));
 
 create policy "report_votes_insert" on report_votes
 for insert with check (auth.uid() = user_id);

@@ -102,6 +102,19 @@ export function scoreReport(
     confidence_factors.push({ label: "Image evidence", value: REPORT_SCORING.confidence.image, type: "bonus" });
   }
 
+  const evidenceReview = report.analysis_json.evidence_review;
+  if (evidenceReview?.status === "matches") {
+    risk_score += 6;
+    risk_factors.push({ label: "AI evidence match", value: 6, type: "bonus" });
+    confidence_factors.push({ label: "AI evidence match", value: 12, type: "bonus" });
+  } else if (evidenceReview?.status === "mismatch") {
+    risk_score -= 12;
+    risk_factors.push({ label: "Image/report mismatch", value: -12, type: "penalty" });
+    confidence_factors.push({ label: "Image/report mismatch", value: -16, type: "penalty" });
+  } else if (evidenceReview?.status === "unclear" && report.image_url) {
+    confidence_factors.push({ label: "Image needs review", value: 4, type: "bonus" });
+  }
+
   if (detailedDescription(report.description)) {
     risk_score += REPORT_SCORING.bonuses.description;
     risk_factors.push({ label: "Detailed description", value: REPORT_SCORING.bonuses.description, type: "bonus" });

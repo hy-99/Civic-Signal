@@ -35,7 +35,7 @@ export function VerificationButtons({
 
   return (
     <Card className="grid gap-4 p-5">
-      <h3 className="text-lg font-semibold text-slate-950">Verification Actions</h3>
+      <h3 className="text-lg font-semibold text-slate-950">Citizen Verification</h3>
       <div className="flex flex-wrap gap-3">
         <Button
           type="button"
@@ -43,31 +43,17 @@ export function VerificationButtons({
           onClick={() => submitVote("confirm")}
           disabled={isPending}
         >
-          Confirm
+          Verify
         </Button>
         <Button
           type="button"
-          className="border border-rose-200 bg-rose-50 text-rose-700 shadow-sm shadow-rose-100 hover:bg-rose-100 hover:text-rose-800"
-          variant="secondary"
-          onClick={() => submitVote("dispute")}
-          disabled={isPending}
-        >
-          Dispute
-        </Button>
-        <Button
-          type="button"
-          className="border border-sky-200 bg-sky-50 text-sky-700 shadow-sm shadow-sky-100 hover:bg-sky-100 hover:text-sky-800"
+          className="border border-slate-300 bg-slate-50 text-slate-700 shadow-sm hover:bg-slate-100 hover:text-slate-900"
           variant="secondary"
           onClick={() => submitVote("resolved")}
           disabled={isPending}
         >
-          Resolved
+          Not there
         </Button>
-        {entity === "report" ? (
-          <Button type="button" variant="ghost" onClick={() => submitVote("duplicate")} disabled={isPending}>
-            Duplicate
-          </Button>
-        ) : null}
       </div>
       {message ? <p className="text-sm text-slate-600">{message}</p> : null}
     </Card>

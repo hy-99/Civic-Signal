@@ -1,7 +1,7 @@
 export type UserRole = "user" | "moderator" | "admin";
-export type ReportStatus = "active" | "needs_review" | "verified" | "resolved" | "hidden" | "false_alarm" | "duplicate";
+export type ReportStatus = "active" | "needs_review" | "verified" | "in_progress" | "resolved" | "hidden" | "false_alarm" | "duplicate";
 export type PublicSignalStatus = "unmatched" | "matched" | "ignored" | "needs_review" | "hidden";
-export type RiskClusterStatus = "active" | "monitoring" | "urgent" | "resolved" | "hidden" | "false_alarm";
+export type RiskClusterStatus = "active" | "monitoring" | "urgent" | "in_progress" | "resolved" | "hidden" | "false_alarm";
 export type RiskLevel = "low" | "watch" | "serious" | "urgent";
 export type ConfidenceLabel = "very_low" | "low" | "medium" | "high" | "very_high";
 export type SourceType = "rss" | "city_alert" | "weather" | "traffic" | "news_api" | "manual" | "other";
@@ -48,12 +48,23 @@ export interface ScoreBreakdown {
   recommended_action: string;
 }
 
+export interface EvidenceReview {
+  status: "matches" | "unclear" | "mismatch" | "not_provided";
+  match_score: number;
+  issue_likelihood: number;
+  summary: string;
+  flags: string[];
+  method: "vision_ai" | "local_heuristic" | "not_available";
+  checked_at: string;
+}
+
 export interface AnalysisJson {
   score_breakdown: ScoreBreakdown;
   moderation_flags: ModerationFlag[];
   extracted_location_text?: string | null;
   source_confidence?: number;
   matching_summary?: string;
+  evidence_review?: EvidenceReview;
 }
 
 export interface VoteSummary {

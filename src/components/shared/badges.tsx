@@ -37,6 +37,10 @@ export function StatusBadge({ status }: { status: ReportStatus | string }) {
   const tone =
     status === "resolved"
       ? "success"
+      : status === "verified"
+        ? "success"
+        : status === "in_progress"
+          ? "accent"
       : status === "hidden" || status === "false_alarm" || status === "duplicate"
         ? "neutral"
         : status === "needs_review"

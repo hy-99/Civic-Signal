@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import {
   AlertTriangle,
@@ -13,7 +14,7 @@ import {
 import { CATEGORY_OPTIONS } from "@/lib/constants";
 import type { ReportCardView, ReportCategoryKey, RiskClusterView, RiskLevel } from "@/lib/types";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { RiskBadge } from "@/components/shared/badges";
+import { RiskBadge, StatusBadge } from "@/components/shared/badges";
 import { RealMap, type FocusLocation, type MapAudience } from "@/components/map/real-map";
 import { LocationSearch, type LocationOption } from "@/components/map/location-search";
 import { Button, Input, Select } from "@/components/ui/primitives";
@@ -25,11 +26,15 @@ type CommandCenterProps = {
   children?: React.ReactNode;
 };
 
+type ReportAction =
+  | { kind: "citizen"; vote: "confirm" | "resolved" }
+  | { kind: "responder"; status: "verified" | "in_progress" | "false_alarm" };
+
 const AUDIENCE_COPY = {
   citizen: {
     sidebarEyebrow: "Citizen view",
     sidebarTitle: "Hazards near you",
-    sidebarHelp: "Avoid these areas, or tap Confirm to verify what others reported.",
+    sidebarHelp: "Avoid risky areas, or tap Verify / Not there to help keep the map accurate.",
     stats: [
       { key: "active", label: "Active", tone: "bg-blue-50 text-blue-700" },
       { key: "urgent", label: "Avoid", tone: "bg-rose-50 text-rose-700" },
@@ -39,7 +44,7 @@ const AUDIENCE_COPY = {
   responder: {
     sidebarEyebrow: "Government / Police view",
     sidebarTitle: "Active incidents",
-    sidebarHelp: "Prioritized by AI risk score. Dispatch and route from the cluster detail.",
+    sidebarHelp: "Confirm, mark in progress, or remove hazards that are gone or incorrect.",
     stats: [
       { key: "active", label: "Open", tone: "bg-blue-50 text-blue-700" },
       { key: "urgent", label: "Dispatch", tone: "bg-rose-50 text-rose-700" },
@@ -53,13 +58,13 @@ function HazardListItem({
   selected,
   audience,
   onSelect,
-  onVote,
+  onAction,
 }: {
   report: ReportCardView;
   selected: boolean;
   audience: MapAudience;
   onSelect: () => void;
-  onVote: (reportId: string, vote: "confirm" | "dispute" | "resolved") => void;
+  onAction: (reportId: string, action: ReportAction) => void;
 }) {
   const riskAccent =
     report.risk_level === "urgent"
@@ -87,11 +92,17 @@ function HazardListItem({
           </p>
         </div>
         {audience === "responder" ? (
-          <div className="grid place-items-center rounded-lg bg-slate-900 px-2 py-1 text-xs font-black text-white">
-            {report.risk_score}
+          <div className="grid gap-1 justify-items-end">
+            <div className="grid place-items-center rounded-lg bg-slate-900 px-2 py-1 text-xs font-black text-white">
+              {report.risk_score}
+            </div>
+            <StatusBadge status={report.status} />
           </div>
         ) : (
-          <RiskBadge risk_level={report.risk_level} />
+          <div className="grid gap-1 justify-items-end">
+            <RiskBadge risk_level={report.risk_level} />
+            <StatusBadge status={report.status} />
+          </div>
         )}
       </div>
 
@@ -104,41 +115,68 @@ function HazardListItem({
             <span>{report.vote_summary.confirm} ✓ {report.vote_summary.dispute} ✗</span>
           </>
         ) : (
-          <span>{report.vote_summary.confirm} confirmed</span>
+          <span>{report.vote_summary.confirm} verified</span>
         )}
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2">
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onVote(report.id, "confirm");
-          }}
-          className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-700 shadow-sm shadow-emerald-100 transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800"
-        >
-          {audience === "responder" ? "Verify" : "Confirm"}
-        </button>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onVote(report.id, "dispute");
-          }}
-          className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-black text-rose-700 shadow-sm shadow-rose-100 transition hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800"
-        >
-          Dispute
-        </button>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onVote(report.id, "resolved");
-          }}
-          className="rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-black text-sky-700 shadow-sm shadow-sky-100 transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-800"
-        >
-          {audience === "responder" ? "Close" : "Resolved"}
-        </button>
+        {audience === "citizen" ? (
+          <>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction(report.id, { kind: "citizen", vote: "confirm" });
+              }}
+              className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-700 shadow-sm shadow-emerald-100 transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800"
+            >
+              Verify
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction(report.id, { kind: "citizen", vote: "resolved" });
+              }}
+              className="rounded-md border border-slate-300 bg-slate-50 px-2.5 py-1 text-[11px] font-black text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-400 hover:bg-slate-100 hover:text-slate-900"
+            >
+              Not there
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction(report.id, { kind: "responder", status: "verified" });
+              }}
+              className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-700 shadow-sm shadow-emerald-100 transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800"
+            >
+              Confirmed
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction(report.id, { kind: "responder", status: "in_progress" });
+              }}
+              className="rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-black text-sky-700 shadow-sm shadow-sky-100 transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-800"
+            >
+              In progress
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onAction(report.id, { kind: "responder", status: "false_alarm" });
+              }}
+              className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-black text-rose-700 shadow-sm shadow-rose-100 transition hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800"
+            >
+              Remove
+            </button>
+          </>
+        )}
         <Link
           href={`/app/reports/${report.id}`}
           className="ml-auto text-[11px] font-black text-blue-700"
@@ -214,6 +252,7 @@ function AudienceToggle({
 }
 
 export function CommandCenter({ clusters, reports, submitMode = false, children }: CommandCenterProps) {
+  const router = useRouter();
   const [selectedId, setSelectedId] = useState<string | null>(clusters[0]?.id ?? null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<ReportCategoryKey | "all">("all");
@@ -255,20 +294,38 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
 
   const activeCount = clusters.filter((cluster) => cluster.status === "active" || cluster.status === "monitoring" || cluster.status === "urgent").length;
   const urgentCount = clusters.filter((cluster) => cluster.risk_level === "urgent" || cluster.risk_level === "serious").length;
-  const resolvedCount = clusters.filter((cluster) => cluster.status === "resolved").length;
+  const resolvedCount = clusters.filter((cluster) => cluster.status === "resolved" || cluster.status === "in_progress").length;
 
   const audienceCopy = AUDIENCE_COPY[audience];
   const statValues = { active: activeCount, urgent: urgentCount, resolved: resolvedCount } as Record<string, number>;
 
-  const voteOnReport = (reportId: string, vote: "confirm" | "dispute" | "resolved") => {
+  const handleReportAction = (reportId: string, action: ReportAction) => {
     startTransition(async () => {
-      const response = await fetch(`/api/reports/${reportId}/vote`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ vote_type: vote }),
-      });
+      const response =
+        action.kind === "citizen"
+          ? await fetch(`/api/reports/${reportId}/vote`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ vote_type: action.vote }),
+            })
+          : await fetch(`/api/reports/${reportId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: action.status }),
+            });
       const payload = (await response.json()) as { ok: boolean; error?: string };
-      setNotice(payload.ok ? `Saved vote: ${vote}.` : payload.error || "Sign in to verify reports.");
+      const label =
+        action.kind === "citizen"
+          ? action.vote === "confirm"
+            ? "verified"
+            : "marked not there"
+          : action.status === "verified"
+            ? "government confirmed"
+            : action.status === "in_progress"
+              ? "marked in progress"
+              : "removed from public map";
+      setNotice(payload.ok ? `Saved: ${label}.` : payload.error || "Unable to update hazard.");
+      if (payload.ok) router.refresh();
     });
   };
 
@@ -351,7 +408,7 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
                       onSelect={() => {
                         if (report.cluster_id) setSelectedId(report.cluster_id);
                       }}
-                      onVote={voteOnReport}
+                      onAction={handleReportAction}
                     />
                   ))}
                 </div>

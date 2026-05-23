@@ -47,7 +47,7 @@ function categoryMatches(left: Report["category"], right: Report["category"]) {
 }
 
 function isPublicCluster(cluster: RiskCluster) {
-  return ["active", "monitoring", "urgent", "resolved"].includes(cluster.status);
+  return ["active", "monitoring", "urgent", "in_progress", "resolved"].includes(cluster.status);
 }
 
 function clusterWindowHours(category: Report["category"]) {
@@ -67,7 +67,7 @@ export function findMatchingClusterInState(
 ) {
   const windowHours = clusterWindowHours(item.category);
   const eligible = state.risk_clusters.filter((cluster) => {
-    if (!["active", "monitoring", "urgent"].includes(cluster.status)) return false;
+    if (!["active", "monitoring", "urgent", "in_progress"].includes(cluster.status)) return false;
     if (!categoryMatches(cluster.category, item.category)) return false;
     const distance = haversineDistanceMeters(
       { latitude: cluster.latitude, longitude: cluster.longitude },
