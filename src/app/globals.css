@@ -1173,107 +1173,102 @@ img {
 .cs-landing__report-row,
 .cs-landing__confidence,
 .cs-landing__rest {
-  transition: opacity 620ms cubic-bezier(0.22, 1, 0.36, 1),
-              transform 620ms cubic-bezier(0.22, 1, 0.36, 1),
-              filter 620ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 520ms cubic-bezier(0.4, 0, 0.2, 1),
+              transform 520ms cubic-bezier(0.4, 0, 0.2, 1);
   will-change: opacity, transform;
 }
 
+/* Coordinated exit: everything drifts upward together with consistent staggering,
+   the preview card zooms toward viewer so the transition feels like "diving in"
+   to the map, not collapsing. */
+
 [data-launch-phase="exiting"] .cs-landing__header {
   opacity: 0;
-  transform: translateY(-18px);
-  filter: blur(3px);
+  transform: translateY(-10px);
 }
 
 [data-launch-phase="exiting"] .cs-landing__eyebrow {
   opacity: 0;
-  transform: translateY(-18px);
-  transition-delay: 20ms;
+  transform: translateY(-12px) scale(0.97);
+  transition-delay: 40ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__title {
   opacity: 0;
-  transform: translateY(-34px) scale(0.965);
-  transition-delay: 60ms;
-  filter: blur(2px);
+  transform: translateY(-16px) scale(0.97);
+  transition-delay: 80ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__sub {
   opacity: 0;
-  transform: translateY(-22px);
-  transition-delay: 110ms;
+  transform: translateY(-12px);
+  transition-delay: 120ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__cta {
   opacity: 0;
-  transform: translateY(18px) scale(0.98);
+  transform: translateY(-10px) scale(0.98);
   transition-delay: 160ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__stats {
   opacity: 0;
-  transform: translateY(26px);
-  transition-delay: 180ms;
+  transform: translateY(-8px) scale(0.98);
+  transition-delay: 200ms;
 }
 
-[data-launch-phase="exiting"] .cs-landing__chip-yellow {
-  opacity: 0;
-  transform: translate(40px, -40px) rotate(8deg);
-  transition-delay: 40ms;
-}
-
+[data-launch-phase="exiting"] .cs-landing__chip-yellow,
 [data-launch-phase="exiting"] .cs-landing__chip-green {
   opacity: 0;
-  transform: translate(-40px, 40px) rotate(-8deg);
-  transition-delay: 40ms;
+  transform: scale(0.84);
+  transition-delay: 60ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__card {
   opacity: 0;
-  transform: translate(-50%, -45%) rotate(0deg) scale(0.7);
+  transform: translate(-50%, -50%) rotate(2deg) scale(1.14);
   transition-delay: 80ms;
-  transition-duration: 620ms;
-  filter: blur(4px) saturate(0.86);
+  transition-duration: 560ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__report-row {
   opacity: 0;
-  transform: translateX(42px) scale(0.97);
-  filter: blur(2px);
+  transform: translateY(-6px);
 }
 
 [data-launch-phase="exiting"] .cs-landing__report-row:nth-child(2) {
-  transition-delay: 70ms;
+  transition-delay: 50ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__report-row:nth-child(3) {
-  transition-delay: 130ms;
+  transition-delay: 100ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__confidence {
   opacity: 0;
-  transform: translateY(26px) scale(0.96);
-  transition-delay: 170ms;
-  filter: blur(3px);
+  transform: translateY(-6px);
+  transition-delay: 140ms;
 }
 
 [data-launch-phase="exiting"] .cs-landing__rest {
   opacity: 0;
-  transform: translateY(20px);
-  transition-delay: 60ms;
+  transform: translateY(-12px);
+  transition-delay: 40ms;
 }
 
+/* Full-viewport curtain. Color matches launch-overlay background so handoff
+   is visually continuous. Sits above content so it darkens the whole page,
+   not just the hero. */
 .cs-landing__veil {
-  position: absolute;
+  position: fixed;
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 76% 48%, rgba(36, 84, 214, 0.22) 0%, transparent 34%),
-    radial-gradient(circle at 50% 50%, rgba(6, 17, 42, 0.68) 0%, rgba(4, 9, 26, 0.94) 72%);
+    radial-gradient(ellipse at 50% 50%, #0d2046 0%, #04091a 70%);
   opacity: 0;
-  transition: opacity 700ms cubic-bezier(0.22, 1, 0.36, 1);
-  transition-delay: 120ms;
-  z-index: 2;
+  transition: opacity 540ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition-delay: 80ms;
+  z-index: 40;
 }
 
 [data-launch-phase="exiting"] .cs-landing__veil {
@@ -1282,6 +1277,7 @@ img {
 
 [data-launch-phase="overlay"] .cs-landing__veil {
   opacity: 1;
+  transition-delay: 0ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1308,6 +1304,11 @@ img {
   background:
     radial-gradient(ellipse at 50% 50%, #0d2046 0%, #04091a 70%),
     #04091a;
+  /* Container fade-in so mounting after level-1 doesn't pop. The dark veil
+     from the landing matches this same background color, so during the fade
+     the user sees a continuous dark field — the radar/HUD elements just rise
+     out of it. */
+  animation: cs-launch-mount 360ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
 .cs-launch__bg {
@@ -1723,6 +1724,184 @@ img {
   to { opacity: 0; transform: scale(1.06); }
 }
 
+@keyframes cs-launch-mount {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Level-2 additions: corner HUD brackets, cardinals, telemetry, alerts ── */
+
+.cs-launch__bracket {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+  opacity: 0;
+  animation: cs-launch-bracket-in 540ms cubic-bezier(0.22, 1, 0.36, 1) 240ms forwards;
+}
+
+.cs-launch__bracket::before,
+.cs-launch__bracket::after {
+  content: "";
+  position: absolute;
+  background: rgba(79, 208, 255, 0.62);
+  box-shadow: 0 0 8px rgba(79, 208, 255, 0.5);
+}
+
+.cs-launch__bracket::before { height: 2px; width: 32px; }
+.cs-launch__bracket::after  { width: 2px; height: 32px; }
+
+.cs-launch__bracket--tl { top: 22px; left: 22px; }
+.cs-launch__bracket--tl::before { top: 0; left: 0; }
+.cs-launch__bracket--tl::after  { top: 0; left: 0; }
+
+.cs-launch__bracket--tr { top: 22px; right: 22px; }
+.cs-launch__bracket--tr::before { top: 0; right: 0; }
+.cs-launch__bracket--tr::after  { top: 0; right: 0; }
+
+.cs-launch__bracket--bl { bottom: 22px; left: 22px; }
+.cs-launch__bracket--bl::before { bottom: 0; left: 0; }
+.cs-launch__bracket--bl::after  { bottom: 0; left: 0; }
+
+.cs-launch__bracket--br { bottom: 22px; right: 22px; }
+.cs-launch__bracket--br::before { bottom: 0; right: 0; }
+.cs-launch__bracket--br::after  { bottom: 0; right: 0; }
+
+@keyframes cs-launch-bracket-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.cs-launch__cardinal {
+  position: absolute;
+  font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.24em;
+  color: rgba(79, 208, 255, 0.72);
+  text-shadow: 0 0 6px rgba(79, 208, 255, 0.4);
+  opacity: 0;
+  animation: cs-launch-fade-in 520ms cubic-bezier(0.22, 1, 0.36, 1) 420ms forwards;
+}
+
+.cs-launch__cardinal--n { top: 4%; left: 50%; transform: translateX(-50%); }
+.cs-launch__cardinal--s { bottom: 4%; left: 50%; transform: translateX(-50%); }
+.cs-launch__cardinal--e { right: 4%; top: 50%; transform: translateY(-50%); }
+.cs-launch__cardinal--w { left: 4%; top: 50%; transform: translateY(-50%); }
+
+@keyframes cs-launch-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cs-launch__telemetry {
+  position: absolute;
+  left: max(28px, 4vw);
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  gap: 6px;
+  font-family: ui-monospace, "SF Mono", "Menlo", monospace;
+  font-size: 11px;
+  color: rgba(79, 208, 255, 0.85);
+  text-shadow: 0 0 6px rgba(79, 208, 255, 0.25);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.cs-launch__telemetry-head {
+  font-size: 9px;
+  letter-spacing: 0.32em;
+  color: rgba(255, 216, 77, 0.78);
+  margin: 0 0 4px;
+  opacity: 0;
+  animation: cs-launch-fade-in 360ms ease-out 240ms forwards;
+}
+
+.cs-launch__telemetry-line {
+  margin: 0;
+  opacity: 0;
+  transform: translateX(-8px);
+  animation: cs-launch-telemetry-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  white-space: nowrap;
+}
+
+@keyframes cs-launch-telemetry-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.cs-launch__alerts {
+  position: absolute;
+  right: max(28px, 4vw);
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  gap: 10px;
+  pointer-events: none;
+  z-index: 3;
+  width: min(260px, 32vw);
+}
+
+.cs-launch__alert {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(8, 18, 42, 0.78);
+  border: 1px solid var(--cs-color, rgba(79, 208, 255, 0.45));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 12px 32px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  opacity: 0;
+  transform: translateX(28px);
+  animation: cs-launch-alert-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.cs-launch__alert-tag {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  color: white;
+  font-family: ui-monospace, "SF Mono", monospace;
+}
+
+.cs-launch__alert-body {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 0.01em;
+}
+
+@keyframes cs-launch-alert-in {
+  0%   { opacity: 0; transform: translateX(28px); }
+  60%  { opacity: 1; transform: translateX(-3px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+.cs-launch__sparkline {
+  width: 120px;
+  height: 24px;
+  opacity: 0;
+  animation: cs-launch-fade-in 480ms ease-out 520ms forwards;
+}
+.cs-launch__sparkline polyline {
+  stroke-dasharray: 220;
+  stroke-dashoffset: 220;
+  animation: cs-launch-sparkline-draw 900ms cubic-bezier(0.22, 1, 0.36, 1) 560ms forwards;
+  filter: drop-shadow(0 0 4px rgba(79, 208, 255, 0.6));
+}
+
+@keyframes cs-launch-sparkline-draw {
+  to { stroke-dashoffset: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .cs-launch,
   .cs-launch__bg,
@@ -1740,6 +1919,13 @@ img {
   .cs-launch__caret,
   .cs-launch__scan,
   .cs-launch__shock,
+  .cs-launch__bracket,
+  .cs-launch__cardinal,
+  .cs-launch__telemetry-head,
+  .cs-launch__telemetry-line,
+  .cs-launch__alert,
+  .cs-launch__sparkline,
+  .cs-launch__sparkline polyline,
   .civic-map-entrance {
     animation: none;
     opacity: 1;

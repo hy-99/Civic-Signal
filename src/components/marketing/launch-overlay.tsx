@@ -35,6 +35,21 @@ const STATUS_MESSAGES = [
   "Live map ready",
 ];
 
+const TELEMETRY_LINES = [
+  "> handshake.tls   OK",
+  "> region.fetch    SF-BAY",
+  "> signals.stream  ONLINE",
+  "> moderation.q    3 hold",
+  "> risk.model      v4.7",
+  "> latency         42ms",
+];
+
+const ALERT_TOASTS = [
+  { delay: 520, label: "VERIFIED", body: "Embarcadero — hazard confirmed", tone: "#ef4444" },
+  { delay: 820, label: "INCOMING", body: "Mission — 2 new confirmations", tone: "#eab308" },
+  { delay: 1080, label: "CLUSTER", body: "Bayview — 4 signals merged", tone: "#f97316" },
+];
+
 export function LaunchOverlay() {
   const [signalCount, setSignalCount] = useState(0);
   const [messageIndex, setMessageIndex] = useState(0);
@@ -72,6 +87,11 @@ export function LaunchOverlay() {
       <div className="cs-launch__bg" />
       <div className="cs-launch__grid" />
 
+      <div className="cs-launch__bracket cs-launch__bracket--tl" />
+      <div className="cs-launch__bracket cs-launch__bracket--tr" />
+      <div className="cs-launch__bracket cs-launch__bracket--bl" />
+      <div className="cs-launch__bracket cs-launch__bracket--br" />
+
       <div className="cs-launch__radar-wrap">
         <div className="cs-launch__radar-ring cs-launch__radar-ring--1" />
         <div className="cs-launch__radar-ring cs-launch__radar-ring--2" />
@@ -79,7 +99,42 @@ export function LaunchOverlay() {
         <div className="cs-launch__radar-sweep" />
         <div className="cs-launch__radar-axis cs-launch__radar-axis--h" />
         <div className="cs-launch__radar-axis cs-launch__radar-axis--v" />
+        <span className="cs-launch__cardinal cs-launch__cardinal--n">N</span>
+        <span className="cs-launch__cardinal cs-launch__cardinal--e">E</span>
+        <span className="cs-launch__cardinal cs-launch__cardinal--s">S</span>
+        <span className="cs-launch__cardinal cs-launch__cardinal--w">W</span>
       </div>
+
+      <aside className="cs-launch__telemetry">
+        <p className="cs-launch__telemetry-head">SYSTEM · BOOT</p>
+        {TELEMETRY_LINES.map((line, i) => (
+          <p
+            key={line}
+            className="cs-launch__telemetry-line"
+            style={{ animationDelay: `${320 + i * 80}ms` }}
+          >
+            {line}
+          </p>
+        ))}
+      </aside>
+
+      <aside className="cs-launch__alerts">
+        {ALERT_TOASTS.map((t) => (
+          <div
+            key={t.label + t.body}
+            className="cs-launch__alert"
+            style={{
+              animationDelay: `${t.delay}ms`,
+              ["--cs-color" as string]: t.tone,
+            }}
+          >
+            <span className="cs-launch__alert-tag" style={{ background: t.tone }}>
+              {t.label}
+            </span>
+            <span className="cs-launch__alert-body">{t.body}</span>
+          </div>
+        ))}
+      </aside>
 
       <svg
         className="cs-launch__lines"
@@ -159,6 +214,21 @@ export function LaunchOverlay() {
           <span className="cs-launch__counter-dot" />
           <span className="cs-launch__counter-label">Signals received</span>
         </div>
+        <svg
+          className="cs-launch__sparkline"
+          viewBox="0 0 120 24"
+          preserveAspectRatio="none"
+          aria-hidden="true"
+        >
+          <polyline
+            points="0,18 12,15 24,17 36,11 48,13 60,8 72,10 84,5 96,7 108,3 120,4"
+            fill="none"
+            stroke="#4fd0ff"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
         <p className="cs-launch__sub">AI-evaluating risk in real time</p>
       </div>
 
