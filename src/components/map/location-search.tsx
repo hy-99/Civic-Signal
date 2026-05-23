@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 export type LocationOption = {
   name: string;
-  kind: "neighborhood" | "school" | "park" | "transit" | "landmark" | "hospital";
+  kind: "neighborhood" | "school" | "park" | "transit" | "landmark" | "hospital" | "address";
   latitude: number;
   longitude: number;
   zoom?: number;
@@ -18,6 +18,7 @@ const KIND_ICON: Record<LocationOption["kind"], string> = {
   transit: "🚇",
   landmark: "📍",
   hospital: "🏥",
+  address: "🏠",
 };
 
 const SF_LOCATIONS: LocationOption[] = [
@@ -57,11 +58,67 @@ export function LocationSearch({ onPick }: LocationSearchProps) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [remoteOption, setRemoteOption] = useState<LocationOption | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const results = useMemo(() => {
+  const localResults = useMemo(() => {
     if (!query.trim()) return SF_LOCATIONS.slice(0, 6);
     return SF_LOCATIONS.filter((opt) => fuzzyMatch(query, opt.name)).slice(0, 8);
+  }, [query]);
+
+  const results = useMemo(() => {
+    if (!query.trim()) return localResults;
+    const unique = new Map<string, LocationOption>();
+    if (remoteOption) unique.set(remoteOption.name, remoteOption);
+    localResults.forEach((option) => {
+      if (!unique.has(option.name)) unique.set(option.name, option);
+    });
+    return Array.from(unique.values());
+  }, [localResults, remoteOption, query]);
+
+  useEffect(() => {
+    if (!query.trim() || query.trim().length < 3) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(async () => {
+      setSearchLoading(true);
+      setSearchError("");
+
+      try {
+        const response = await fetch(`/api/geocode?query=${encodeURIComponent(query)}`, {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error("Unable to resolve location.");
+        }
+
+        const payload = await response.json();
+        setRemoteOption({
+          name: payload.formatted_address || query,
+          kind: "address",
+          latitude: payload.latitude,
+          longitude: payload.longitude,
+          zoom: 15,
+        });
+      } catch {
+        if (!controller.signal.aborted) {
+          setRemoteOption(null);
+          setSearchError("Unable to find that place. Try another address or landmark.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeoutId);
+    };
   }, [query]);
 
   useEffect(() => {
@@ -102,16 +159,23 @@ export function LocationSearch({ onPick }: LocationSearchProps) {
       <input
         type="text"
         className="cs-locsearch__input"
-        placeholder="Jump to a neighborhood, school, or station…"
+        placeholder="Search any Bay Area address, building, street, or landmark…"
         value={query}
         onChange={(event) => {
-          setQuery(event.target.value);
+          const nextQuery = event.target.value;
+          setQuery(nextQuery);
           setActiveIndex(0);
           setOpen(true);
+
+          if (!nextQuery.trim() || nextQuery.trim().length < 3) {
+            setRemoteOption(null);
+            setSearchError("");
+            setSearchLoading(false);
+          }
         }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
-        aria-label="Search neighborhoods, schools, or transit stops"
+        aria-label="Search any Bay Area address or place"
       />
       {query ? (
         <button
@@ -132,7 +196,7 @@ export function LocationSearch({ onPick }: LocationSearchProps) {
           {results.length ? (
             results.map((option, index) => (
               <button
-                key={option.name}
+                key={`${option.kind}:${option.name}`}
                 type="button"
                 className="cs-locsearch__option"
                 data-active={index === activeIndex ? "true" : "false"}
@@ -145,7 +209,9 @@ export function LocationSearch({ onPick }: LocationSearchProps) {
               </button>
             ))
           ) : (
-            <p className="cs-locsearch__empty">No matching places.</p>
+            <p className="cs-locsearch__empty">
+              {searchLoading ? "Searching…" : searchError || "No matching places."}
+            </p>
           )}
         </div>
       ) : null}
