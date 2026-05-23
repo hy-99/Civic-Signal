@@ -115,6 +115,9 @@ export function ReportForm() {
         return;
       }
 
+      window.dispatchEvent(
+        new CustomEvent("civicsignal:report-published", { detail: { id: payload.data.id } }),
+      );
       router.push(`/app/reports/${payload.data.id}`);
     } catch (submitError) {
       setServerError(submitError instanceof Error ? submitError.message : "Report submit failed. Please try again.");

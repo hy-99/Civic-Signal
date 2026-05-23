@@ -1003,16 +1003,30 @@ img {
 }
 
 .cs-notif__item {
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 10px;
-  padding: 10px 14px;
   border-bottom: 1px solid rgb(241, 245, 249);
-  align-items: start;
 }
 
 .cs-notif__item:last-child {
   border-bottom: 0;
+}
+
+.cs-notif__row {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  padding: 10px 14px;
+  align-items: start;
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 140ms ease;
+}
+
+a.cs-notif__row:hover {
+  background-color: rgb(241, 245, 249);
+}
+
+.dark a.cs-notif__row:hover {
+  background-color: rgb(30, 41, 59);
 }
 
 .cs-notif__icon {
