@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import { CATEGORY_OPTIONS } from "@/lib/constants";
-import type { ReportCardView, ReportCategoryKey, RiskClusterView, RiskLevel } from "@/lib/types";
+import type { AuthViewer, ReportCardView, ReportCategoryKey, RiskClusterView, RiskLevel } from "@/lib/types";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { RiskBadge, StatusBadge } from "@/components/shared/badges";
 import { RealMap, type FocusLocation, type MapAudience } from "@/components/map/real-map";
@@ -21,9 +21,16 @@ import { Button, Input, Select } from "@/components/ui/primitives";
 type CommandCenterProps = {
   clusters: RiskClusterView[];
   reports: ReportCardView[];
+  viewer?: AuthViewer | null;
   submitMode?: boolean;
   children?: React.ReactNode;
 };
+
+const RESPONDER_ROLES = ["moderator", "admin"] as const;
+
+function isResponder(viewer?: AuthViewer | null) {
+  return Boolean(viewer && (RESPONDER_ROLES as readonly string[]).includes(viewer.role));
+}
 
 type ReportAction =
   | { kind: "citizen"; vote: "confirm" | "resolved" }
@@ -56,12 +63,14 @@ function HazardListItem({
   report,
   selected,
   audience,
+  priorityRank,
   onSelect,
   onAction,
 }: {
   report: ReportCardView;
   selected: boolean;
   audience: MapAudience;
+  priorityRank?: number;
   onSelect: () => void;
   onAction: (reportId: string, action: ReportAction) => void;
 }) {
@@ -78,14 +87,31 @@ function HazardListItem({
     <article
       onClick={onSelect}
       className={cn(
-        "cursor-pointer rounded-xl border border-l-4 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+        "cursor-pointer overflow-hidden rounded-xl border border-l-4 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
         riskAccent,
         selected ? "border-blue-400 bg-blue-50 ring-2 ring-blue-300 shadow-md" : "border-slate-200",
       )}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-black leading-5 tracking-[-0.01em] text-slate-950">{report.title}</h3>
+          <div className="flex min-w-0 items-center gap-2">
+            {audience === "responder" && priorityRank ? (
+              <span
+                className={cn(
+                  "inline-flex h-5 min-w-[28px] items-center justify-center rounded-md px-1.5 text-[10px] font-black uppercase tracking-[0.06em] text-white",
+                  priorityRank === 1
+                    ? "bg-rose-600"
+                    : priorityRank === 2
+                      ? "bg-orange-500"
+                      : "bg-amber-500",
+                )}
+                title={`Priority rank #${priorityRank}`}
+              >
+                #{priorityRank}
+              </span>
+            ) : null}
+            <h3 className="truncate text-sm font-black leading-5 tracking-[-0.01em] text-slate-950">{report.title}</h3>
+          </div>
           <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600">
             {report.analysis_summary || report.description}
           </p>
@@ -250,13 +276,14 @@ function AudienceToggle({
   );
 }
 
-export function CommandCenter({ clusters, reports, submitMode = false, children }: CommandCenterProps) {
+export function CommandCenter({ clusters, reports, viewer, submitMode = false, children }: CommandCenterProps) {
   const router = useRouter();
+  const viewerIsResponder = isResponder(viewer);
   const [selectedId, setSelectedId] = useState<string | null>(clusters[0]?.id ?? null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<ReportCategoryKey | "all">("all");
   const [risk, setRisk] = useState<RiskLevel | "all">("all");
-  const [audience, setAudience] = useState<MapAudience>("citizen");
+  const [audience, setAudience] = useState<MapAudience>(viewerIsResponder ? "responder" : "citizen");
   const [notice, setNotice] = useState("");
   const [focusLocation, setFocusLocation] = useState<FocusLocation | null>(null);
   const [, startTransition] = useTransition();
@@ -291,6 +318,18 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
       .sort((a, b) => b.risk_score - a.risk_score || b.confidence_score - a.confidence_score);
   }, [category, query, reports, risk]);
 
+  // Rank the top 3 most urgent active/needs-review/verified reports by risk_score
+  // so responders see what to address first.
+  const priorityRanks = useMemo(() => {
+    const ranks = new Map<string, number>();
+    const open = ["active", "needs_review", "verified"] as const;
+    const candidates = filteredReports
+      .filter((report) => (open as readonly string[]).includes(report.status))
+      .slice(0, 3);
+    candidates.forEach((report, index) => ranks.set(report.id, index + 1));
+    return ranks;
+  }, [filteredReports]);
+
   const activeCount = clusters.filter((cluster) => cluster.status === "active" || cluster.status === "monitoring" || cluster.status === "urgent").length;
   const urgentCount = clusters.filter((cluster) => cluster.risk_level === "urgent" || cluster.risk_level === "serious").length;
   const resolvedCount = clusters.filter((cluster) => cluster.status === "resolved").length;
@@ -299,6 +338,10 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
   const statValues = { active: activeCount, urgent: urgentCount, resolved: resolvedCount } as Record<string, number>;
 
   const handleReportAction = (reportId: string, action: ReportAction) => {
+    if (action.kind === "responder" && !viewerIsResponder) {
+      setNotice("Government / police access is required for that action.");
+      return;
+    }
     startTransition(async () => {
       const response =
         action.kind === "citizen"
@@ -398,7 +441,7 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
               ) : null}
             </div>
 
-            <div className="civic-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+            <div className="civic-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none p-2">
               {filteredReports.length ? (
                 <div className="grid gap-2">
                   {filteredReports.map((report) => (
@@ -406,6 +449,7 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
                       key={report.id}
                       report={report}
                       audience={audience}
+                      priorityRank={priorityRanks.get(report.id)}
                       selected={report.cluster_id === selected?.id}
                       onSelect={() => {
                         if (report.cluster_id) {

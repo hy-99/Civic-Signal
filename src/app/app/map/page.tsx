@@ -10,5 +10,5 @@ export default async function MapPage() {
     getReports({ sort: "urgent", viewer }),
   ]);
 
-  return <CommandCenter clusters={clusters} reports={reports} />;
+  return <CommandCenter clusters={clusters} reports={reports} viewer={viewer} />;
 }

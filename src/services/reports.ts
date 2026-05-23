@@ -265,8 +265,17 @@ export async function voteOnReport(report_id: string, user_id: string, vote_type
   return withMutableState(async (state) => {
     const report = state.reports.find((item) => item.id === report_id);
     if (!report) throw new Error("Report not found.");
-    const existing = state.report_votes.find((vote) => vote.report_id === report_id && vote.user_id === user_id && vote.vote_type === vote_type);
-    if (!existing) {
+    // One vote per (report, user). Changing vote replaces the previous one
+    // instead of stacking — voters can't hold both "confirm" and "resolved"
+    // on the same report.
+    const existing = state.report_votes.find(
+      (vote) => vote.report_id === report_id && vote.user_id === user_id,
+    );
+    const previousVoteType = existing?.vote_type ?? null;
+    if (existing) {
+      existing.vote_type = vote_type;
+      if (comment !== undefined) existing.comment = comment || null;
+    } else {
       state.report_votes.push({
         id: createId(),
         report_id,
@@ -276,16 +285,20 @@ export async function voteOnReport(report_id: string, user_id: string, vote_type
         created_at: nowIso(),
       });
     }
-    state.report_updates.push({
-      id: createId(),
-      report_id,
-      cluster_id: report.cluster_id,
-      user_id,
-      update_type: "vote",
-      text: `Community vote recorded: ${vote_type}.`,
-      metadata: {},
-      created_at: nowIso(),
-    });
+    if (previousVoteType !== vote_type) {
+      state.report_updates.push({
+        id: createId(),
+        report_id,
+        cluster_id: report.cluster_id,
+        user_id,
+        update_type: "vote",
+        text: previousVoteType
+          ? `Community vote updated: ${previousVoteType} → ${vote_type}.`
+          : `Community vote recorded: ${vote_type}.`,
+        metadata: {},
+        created_at: nowIso(),
+      });
+    }
 
     if (vote_type === "resolved") report.status = "resolved";
     if (vote_type === "duplicate") report.status = "duplicate";
