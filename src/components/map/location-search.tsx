@@ -98,11 +98,15 @@ export function LocationSearch({ onPick }: LocationSearchProps) {
         }
 
         const payload = await response.json();
+        if (!payload.ok || !payload.data) {
+          throw new Error("Unable to resolve location.");
+        }
+
         setRemoteOption({
-          name: payload.formatted_address || query,
+          name: payload.data.formatted_address || query,
           kind: "address",
-          latitude: payload.latitude,
-          longitude: payload.longitude,
+          latitude: payload.data.latitude,
+          longitude: payload.data.longitude,
           zoom: 15,
         });
       } catch {
@@ -145,9 +149,13 @@ export function LocationSearch({ onPick }: LocationSearchProps) {
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActiveIndex((i) => Math.max(i - 1, 0));
-    } else if (event.key === "Enter" && open && results[activeIndex]) {
+    } else if (event.key === "Enter") {
       event.preventDefault();
-      pick(results[activeIndex]);
+      if (open && results[activeIndex]) {
+        pick(results[activeIndex]);
+      } else if (remoteOption) {
+        pick(remoteOption);
+      }
     } else if (event.key === "Escape") {
       setOpen(false);
     }

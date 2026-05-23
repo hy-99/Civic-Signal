@@ -145,7 +145,7 @@ function RasterTileMap({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 720, height: 520 });
   const [zoom, setZoom] = useState(12);
-  const [displayMode, setDisplayMode] = useState<MapDisplayMode>("realistic");
+  const [displayMode] = useState<MapDisplayMode>("realistic");
   const [isLocating, setIsLocating] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const centerLng = userLocation?.lng ?? (clusters.length ? clusters.reduce((total, cluster) => total + cluster.longitude, 0) / clusters.length : DEFAULT_COORDS.lng);
@@ -270,7 +270,6 @@ function RasterTileMap({
           -
         </button>
       </div>
-      <MapModeControl value={displayMode} onChange={setDisplayMode} />
       <div className="absolute bottom-3 right-3 rounded-md bg-white/90 px-2 py-1 text-[10px] font-semibold text-slate-500 shadow-sm">
         © OpenStreetMap contributors
       </div>
@@ -291,32 +290,6 @@ function wrappedTileX(tileX: number, zoom: number) {
   return ((tileX % limit) + limit) % limit;
 }
 
-function MapModeControl({
-  value,
-  onChange,
-}: {
-  value: MapDisplayMode;
-  onChange: (next: MapDisplayMode) => void;
-}) {
-  return (
-    <div className="absolute left-3 top-3 z-10 inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white/95 text-[10px] font-black shadow-sm backdrop-blur">
-      <button
-        type="button"
-        onClick={() => onChange("realistic")}
-        className={cn("px-3 py-2 transition", value === "realistic" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-50")}
-      >
-        Realistic
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange("safety")}
-        className={cn("border-l border-slate-200 px-3 py-2 transition", value === "safety" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-50")}
-      >
-        Safety
-      </button>
-    </div>
-  );
-}
 
 export function RealMap({ clusters, selectedId, audience = "citizen", focusLocation, onSelect, onUnavailable }: RealMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -330,7 +303,7 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
   const firstMarkerPassRef = useRef(true);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [maplibre, setMaplibre] = useState<MapLibreModule | null>(null);
-  const [displayMode, setDisplayMode] = useState<MapDisplayMode>("realistic");
+  const [displayMode] = useState<MapDisplayMode>("realistic");
 
   const center = useMemo<[number, number]>(() => {
     const selected = clusters.find((cluster) => cluster.id === selectedId) || clusters[0];
@@ -485,7 +458,6 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
   return (
     <div className={cn("cs-real-map relative h-full min-h-[360px] w-full bg-[#d9eef7]", `cs-real-map--${displayMode}`)} data-map-mode={displayMode}>
       <div ref={containerRef} className="h-full w-full" data-real-map="maplibre" />
-      <MapModeControl value={displayMode} onChange={setDisplayMode} />
       {status === "loading" ? (
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/95 px-4 py-2 text-xs font-semibold text-slate-600 shadow-md">
           Loading map…

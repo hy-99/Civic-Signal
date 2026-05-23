@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   Building2,
   Search,
-  ShieldCheck,
   Users,
 } from "lucide-react";
 
@@ -459,10 +458,6 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
                 onSelect={handleMapSelect}
               />
               <MapLegendStrip />
-              <div className="pointer-events-none absolute bottom-3 right-3 z-10 hidden items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[10px] font-bold text-slate-500 shadow-sm ring-1 ring-slate-200 md:inline-flex">
-                <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                AI-evaluated
-              </div>
             </div>
 
             {selected && (

@@ -37,6 +37,33 @@ function deterministicFallback(query: string) {
   };
 }
 
+async function geocodeWithNominatim(query: string) {
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "jsonv2");
+  url.searchParams.set("limit", "1");
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "User-Agent": "CivicSignal/1.0 (+https://github.com/hy-99/Civic-Signal)",
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) return null;
+  const results = (await response.json()) as Array<{ lat: string; lon: string; display_name: string }>;
+  const hit = results[0];
+  if (!hit) return null;
+
+  return {
+    latitude: Number(hit.lat),
+    longitude: Number(hit.lon),
+    formatted_address: hit.display_name,
+    provider: "nominatim",
+    raw_json: hit,
+  };
+}
+
 export async function geocodeAddress(query: string) {
   const trimmed = query.trim();
   if (!trimmed) throw new Error("Address query is required.");
@@ -45,12 +72,17 @@ export async function geocodeAddress(query: string) {
   if (cached) return cached;
 
   const env = getEnv();
+  const fallback = deterministicFallback(trimmed);
+
   if (!env.geocoding_api_key || !env.geocoding_provider) {
-    const fallback = deterministicFallback(trimmed);
+    const nominatim = await geocodeWithNominatim(trimmed);
+    if (nominatim) return saveGeocodeCache({ query: trimmed, ...nominatim });
     return saveGeocodeCache({ query: trimmed, ...fallback });
   }
 
-  const fallback = deterministicFallback(trimmed);
+  const nominatim = await geocodeWithNominatim(trimmed);
+  if (nominatim) return saveGeocodeCache({ query: trimmed, ...nominatim, provider: env.geocoding_provider });
+
   return saveGeocodeCache({ query: trimmed, ...fallback, provider: env.geocoding_provider });
 }
 
