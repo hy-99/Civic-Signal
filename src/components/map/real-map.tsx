@@ -333,7 +333,7 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
         });
 
         map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
-        map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: false }, trackUserLocation: false, showUserHeading: false }), "top-right");
+        map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: false }, trackUserLocation: false }), "top-right");
         map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
         map.on("load", () => {
           const initialClusters = initialClustersRef.current;

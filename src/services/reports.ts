@@ -1,5 +1,6 @@
 import { loadState, withMutableState } from "@/lib/data-store";
 import type {
+  AnalysisJson,
   AuthViewer,
   MapFilters,
   Report,
@@ -7,7 +8,7 @@ import type {
   ReportStatus,
   ReportVoteType,
 } from "@/lib/types";
-import { analyzeReportEvidence, analyzeReportText } from "@/services/ai";
+import { analyzeReportText } from "@/services/ai";
 import { linkReportToClusterInState, recalculateClusterInState } from "@/services/clusters";
 import { geocodeAddress } from "@/services/geocoding";
 import { checkReportForModeration } from "@/services/moderation";
@@ -25,7 +26,7 @@ function reportVoteSummary(state: Awaited<ReturnType<typeof loadState>>, report_
 }
 
 function reportIsPublic(report: Report) {
-  return ["active", "verified", "in_progress", "resolved"].includes(report.status);
+  return ["active", "needs_review", "verified", "resolved"].includes(report.status);
 }
 
 function canViewReport(report: Report, viewer?: AuthViewer | null) {
@@ -72,30 +73,12 @@ async function recalculateReportScoreInState(state: Awaited<ReturnType<typeof lo
     score_breakdown: score,
     moderation_flags: existingAnalysis.moderation_flags || [],
     extracted_location_text: report.address_text,
-    evidence_review: existingAnalysis.evidence_review,
+    image_analysis: report.analysis_json.image_analysis || null,
   };
   report.updated_at = nowIso();
   return report;
 }
 
-function syncClusterStatusFromReport(state: Awaited<ReturnType<typeof loadState>>, report: Report) {
-  if (!report.cluster_id) return;
-  const cluster = state.risk_clusters.find((item) => item.id === report.cluster_id);
-  if (!cluster) return;
-
-  if (report.status === "resolved") {
-    cluster.status = "resolved";
-  } else if (report.status === "in_progress") {
-    cluster.status = "in_progress";
-  } else if (report.status === "verified") {
-    cluster.status = cluster.status === "urgent" ? "urgent" : "monitoring";
-  } else if (report.status === "false_alarm" || report.status === "hidden" || report.status === "duplicate") {
-    const publicReports = state.reports.filter((item) => item.cluster_id === cluster.id && reportIsPublic(item));
-    if (!publicReports.length) cluster.status = report.status === "false_alarm" ? "false_alarm" : "hidden";
-  }
-
-  cluster.updated_at = nowIso();
-}
 
 function buildReportView(state: Awaited<ReturnType<typeof loadState>>, report: Report): ReportCardView {
   const cluster = report.cluster_id ? state.risk_clusters.find((item) => item.id === report.cluster_id) || null : null;
@@ -122,6 +105,7 @@ export async function createReport(
   > & {
     latitude?: number | null;
     longitude?: number | null;
+    image_analysis?: Record<string, unknown> | null;
   },
   viewer?: AuthViewer | null,
 ) {
@@ -140,14 +124,6 @@ export async function createReport(
     category: input.category,
     address_text: input.address_text || null,
   });
-  const evidenceReview = await analyzeReportEvidence({
-    title: input.title,
-    description: input.description,
-    category: input.category,
-    image_url: input.image_url || null,
-    image_storage_path: input.image_storage_path || null,
-  });
-
   return withMutableState(async (state) => {
     const draft: Report = {
       id: createId(),
@@ -178,7 +154,7 @@ export async function createReport(
           recommended_action: "",
         },
         moderation_flags: [],
-        evidence_review: evidenceReview,
+        image_analysis: (input.image_analysis as AnalysisJson["image_analysis"]) || null,
       },
       cluster_id: null,
       is_anonymous: input.is_anonymous,
@@ -216,8 +192,8 @@ export async function createReport(
       cluster_id: draft.cluster_id,
       user_id: null,
       update_type: "system_analysis",
-      text: `${draft.analysis_summary || "Scoring completed."} Evidence review: ${evidenceReview.summary}`,
-      metadata: { evidence_review: evidenceReview },
+      text: draft.analysis_summary || "Scoring completed.",
+      metadata: {},
       created_at: nowIso(),
     });
 
@@ -262,7 +238,6 @@ export async function updateReportStatus(id: string, status: ReportStatus) {
     if (!report) throw new Error("Report not found.");
     report.status = status;
     report.updated_at = nowIso();
-    syncClusterStatusFromReport(state, report);
     await recalculateReportScoreInState(state, id);
     if (report.cluster_id) await recalculateClusterInState(state, report.cluster_id);
     return buildReportView(state, report);
@@ -314,7 +289,6 @@ export async function voteOnReport(report_id: string, user_id: string, vote_type
 
     if (vote_type === "resolved") report.status = "resolved";
     if (vote_type === "duplicate") report.status = "duplicate";
-    syncClusterStatusFromReport(state, report);
     await recalculateReportScoreInState(state, report_id);
     if (report.cluster_id) await recalculateClusterInState(state, report.cluster_id);
     return buildReportView(state, report);
@@ -335,7 +309,6 @@ export async function patchReport(id: string, input: Partial<Pick<Report, "title
     const report = state.reports.find((item) => item.id === id);
     if (!report) throw new Error("Report not found.");
     Object.assign(report, input, { updated_at: nowIso() });
-    syncClusterStatusFromReport(state, report);
     await recalculateReportScoreInState(state, id);
     if (report.cluster_id) await recalculateClusterInState(state, report.cluster_id);
     return buildReportView(state, report);

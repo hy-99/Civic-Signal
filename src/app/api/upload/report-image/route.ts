@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { DEMO_IMAGE_DIR } from "@/lib/constants";
 import { fail, ok } from "@/lib/http";
+import { analyzeReportImage } from "@/services/ai";
 import { uploadReportImage } from "@/services/storage";
 
 export async function GET(request: Request) {
@@ -29,8 +30,12 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) return fail("File is required.", 400);
-    const uploaded = await uploadReportImage(file);
-    return ok(uploaded);
+    const imageBytes = await file.arrayBuffer();
+    const [uploaded, image_analysis] = await Promise.all([
+      uploadReportImage(file),
+      analyzeReportImage(imageBytes, file.type),
+    ]);
+    return ok({ ...uploaded, image_analysis });
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Upload failed.", 400);
   }

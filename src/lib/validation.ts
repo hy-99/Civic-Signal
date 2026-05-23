@@ -28,6 +28,7 @@ export const reportCreateSchema = z.object({
   image_storage_path: z.string().optional().nullable(),
   is_anonymous: z.boolean().default(false),
   agreed_to_accuracy: z.literal(true),
+  image_analysis: z.object({}).passthrough().optional().nullable(),
 });
 
 export const reportPatchSchema = z.object({

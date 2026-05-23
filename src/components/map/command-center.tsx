@@ -27,7 +27,7 @@ type CommandCenterProps = {
 
 type ReportAction =
   | { kind: "citizen"; vote: "confirm" | "resolved" }
-  | { kind: "responder"; status: "verified" | "in_progress" | "false_alarm" };
+  | { kind: "responder"; status: "verified" | "false_alarm" };
 
 const AUDIENCE_COPY = {
   citizen: {
@@ -158,7 +158,7 @@ function HazardListItem({
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                onAction(report.id, { kind: "responder", status: "in_progress" });
+                onAction(report.id, { kind: "responder", status: "verified" });
               }}
               className="rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-black text-sky-700 shadow-sm shadow-sky-100 transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-800"
             >
@@ -293,7 +293,7 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
 
   const activeCount = clusters.filter((cluster) => cluster.status === "active" || cluster.status === "monitoring" || cluster.status === "urgent").length;
   const urgentCount = clusters.filter((cluster) => cluster.risk_level === "urgent" || cluster.risk_level === "serious").length;
-  const resolvedCount = clusters.filter((cluster) => cluster.status === "resolved" || cluster.status === "in_progress").length;
+  const resolvedCount = clusters.filter((cluster) => cluster.status === "resolved").length;
 
   const audienceCopy = AUDIENCE_COPY[audience];
   const statValues = { active: activeCount, urgent: urgentCount, resolved: resolvedCount } as Record<string, number>;
@@ -320,9 +320,7 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
             : "marked not there"
           : action.status === "verified"
             ? "government confirmed"
-            : action.status === "in_progress"
-              ? "marked in progress"
-              : "removed from public map";
+            : "removed from public map";
       setNotice(payload.ok ? `Saved: ${label}.` : payload.error || "Unable to update hazard.");
       if (payload.ok) router.refresh();
     });

@@ -2,11 +2,10 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { DEMO_IMAGE_DIR } from "@/lib/constants";
-import { hasOpenAIConfig } from "@/lib/env";
+import { hasGroqConfig, hasOpenAIConfig } from "@/lib/env";
 import { withMutableState } from "@/lib/data-store";
-import type { AiCacheEntry, EvidenceReview, PublicSignal, Report, RiskCluster } from "@/lib/types";
-import { createId, getFileExtension, nowIso } from "@/lib/utils";
+import type { AiCacheEntry, ImageAnalysisResult, PublicSignal, Report, RiskCluster } from "@/lib/types";
+import { createId, nowIso } from "@/lib/utils";
 
 function hashInput(input: unknown) {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
@@ -102,86 +101,120 @@ async function callOpenAI(task_type: string, input: Record<string, unknown>) {
   }
 }
 
-function extensionToMime(filename: string | null | undefined) {
-  const extension = getFileExtension(filename || "image.webp");
-  if (extension === "png") return "image/png";
-  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
-  return "image/webp";
+const IMAGE_ANALYSIS_SYSTEM_PROMPT = `You are a civic hazard image analyst for CivicSignal, a public safety reporting platform.
+
+A citizen has uploaded a photo alongside a hazard report. Analyze the image thoroughly and return a structured JSON object — nothing else, no prose outside it.
+
+Evaluate the image across these dimensions:
+1. Does it visually confirm a civic hazard (road damage, flooding, fire/smoke, structural damage, unsafe conditions, obstruction, environmental hazard, crowd safety issue, etc.)?
+2. How dangerous is the situation shown — assign a danger_score from 1 to 100 where 1 = no visible danger, 50 = moderate hazard with limited impact, 100 = immediate life-threatening danger to the public.
+3. List every specific visual factor that raises or lowers the danger score (damage extent, affected area, people present, blocked access, time of day indicators, scale cues, etc.).
+4. Write a detailed danger_reasoning paragraph explaining your score — include what you see, what risks it poses, who is affected, and what would change the score.
+5. Estimated severity category: low / watch / serious / urgent.
+6. Whether the image appears authentic or possibly edited.
+7. Whether any PII is visible (faces, license plates, addresses, names).
+
+Return ONLY this JSON:
+
+{
+  "confirms_hazard": true | false,
+  "severity_estimate": "low" | "watch" | "serious" | "urgent",
+  "danger_score": <integer 1–100>,
+  "danger_reasoning": "<detailed paragraph: what is visible, what risks it poses, who is affected, what raises or lowers the score>",
+  "danger_factors": ["<factor 1>", "<factor 2>", "<factor 3 — list every visual element that influenced the score>"],
+  "evidence_score": <integer 0–100>,
+  "score_reasoning": "<1-2 sentences on how strongly the image confirms the reported hazard>",
+  "details_observed": "<1-2 sentences: objective description of what is visible>",
+  "authenticity_flag": "likely_authentic" | "possibly_edited" | "unclear",
+  "pii_detected": true | false,
+  "pii_types": [],
+  "recommended_action": "<one sentence: approve, flag for review, or reject and why>"
 }
 
-async function readEvidenceImageAsDataUrl(image_storage_path: string | null | undefined) {
-  if (!image_storage_path) return null;
-  try {
-    const filePath = path.join(process.cwd(), DEMO_IMAGE_DIR, image_storage_path);
-    const buffer = await fs.readFile(filePath);
-    return `data:${extensionToMime(image_storage_path)};base64,${buffer.toString("base64")}`;
-  } catch {
-    return null;
-  }
-}
+Danger score guidance:
+- 1–15: No hazard visible or entirely benign scene
+- 16–30: Minor issue, unlikely to cause harm without intervention
+- 31–50: Moderate hazard, risk to property or minor injury possible
+- 51–70: Serious hazard, significant risk to public safety
+- 71–85: Severe hazard, likely injury or major disruption if unaddressed
+- 86–100: Immediate life-threatening danger, emergency response warranted
 
-function normalizeEvidenceReview(value: Record<string, unknown> | null, fallback: EvidenceReview): EvidenceReview {
-  if (!value) return fallback;
-  const status = ["matches", "unclear", "mismatch", "not_provided"].includes(String(value.status))
-    ? (value.status as EvidenceReview["status"])
-    : fallback.status;
-  return {
-    status,
-    match_score: typeof value.match_score === "number" ? Math.max(0, Math.min(100, Math.round(value.match_score))) : fallback.match_score,
-    issue_likelihood:
-      typeof value.issue_likelihood === "number" ? Math.max(0, Math.min(100, Math.round(value.issue_likelihood))) : fallback.issue_likelihood,
-    summary: typeof value.summary === "string" && value.summary.trim() ? value.summary.slice(0, 260) : fallback.summary,
-    flags: Array.isArray(value.flags) ? value.flags.filter((flag): flag is string => typeof flag === "string").slice(0, 5) : fallback.flags,
-    method: value.method === "vision_ai" ? "vision_ai" : fallback.method,
-    checked_at: nowIso(),
-  };
-}
+Evidence score guidance:
+- 0–20: Image does not show a civic hazard
+- 21–40: Ambiguous — something present but unclear
+- 41–60: Plausible but missing context (scale, angle, timing)
+- 61–80: Hazard clearly visible with supporting detail
+- 81–100: Unambiguous confirmation with full context
 
-async function callOpenAIWithImage(task_type: string, input: Record<string, unknown>, imageUrl: string) {
-  if (!hasOpenAIConfig()) return null;
-  const cache_key = `${task_type}:${hashInput({ ...input, imageUrl })}`;
+If no hazard is visible: confirms_hazard=false, severity_estimate="low", danger_score=1, evidence_score=0.
+Keep all text factual and location-neutral. Never identify private individuals.`;
+
+
+const IMAGE_ANALYSIS_FALLBACK: ImageAnalysisResult = {
+  confirms_hazard: false,
+  severity_estimate: "low",
+  danger_score: 0,
+  danger_reasoning: "Image analysis unavailable — Groq API key not configured.",
+  danger_factors: [],
+  evidence_score: 0,
+  score_reasoning: "Image analysis unavailable — Groq API key not configured.",
+  details_observed: "Could not analyze image.",
+  authenticity_flag: "unclear",
+  pii_detected: false,
+  pii_types: [],
+  recommended_action: "Review manually before publishing.",
+};
+
+export async function analyzeReportImage(imageBytes: ArrayBuffer, mimeType: string): Promise<ImageAnalysisResult> {
+  if (!hasGroqConfig()) return IMAGE_ANALYSIS_FALLBACK;
+
+  const cache_key = `analyze_report_image:${createHash("sha256").update(Buffer.from(imageBytes)).digest("hex")}`;
   const cached = await getCachedAIResult(cache_key);
-  if (cached) return cached.output_json;
+  if (cached) return cached.output_json as unknown as ImageAnalysisResult;
+
+  const base64 = Buffer.from(imageBytes).toString("base64");
+  const dataUrl = `data:${mimeType};base64,${base64}`;
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: [
-          {
-            role: "system",
-            content: [
-              {
-                type: "input_text",
-                text:
-                  "You verify civic hazard evidence. Compare the image with the title, description, and category. Return compact JSON only with status, match_score, issue_likelihood, summary, and flags. Never identify private people.",
-              },
-            ],
-          },
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages: [
+          { role: "system", content: IMAGE_ANALYSIS_SYSTEM_PROMPT },
           {
             role: "user",
             content: [
-              { type: "input_text", text: JSON.stringify(input) },
-              { type: "input_image", image_url: imageUrl },
+              { type: "image_url", image_url: { url: dataUrl } },
+              { type: "text", text: "Analyze this image thoroughly and return the JSON object." },
             ],
           },
         ],
+        max_tokens: 1024,
+        temperature: 0.1,
       }),
     });
 
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { output_text?: string };
-    if (!payload.output_text) return null;
-    const parsed = JSON.parse(payload.output_text) as Record<string, unknown>;
-    await saveAIResult(cache_key, task_type, parsed);
+    if (!response.ok) return IMAGE_ANALYSIS_FALLBACK;
+
+    const payload = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const content = payload.choices?.[0]?.message?.content?.trim();
+    if (!content) return IMAGE_ANALYSIS_FALLBACK;
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return IMAGE_ANALYSIS_FALLBACK;
+
+    const parsed = JSON.parse(jsonMatch[0]) as ImageAnalysisResult;
+    await saveAIResult(cache_key, "analyze_report_image", parsed as unknown as Record<string, unknown>);
     return parsed;
   } catch {
-    return null;
+    return IMAGE_ANALYSIS_FALLBACK;
   }
 }
 
@@ -200,43 +233,6 @@ export async function analyzeReportText(report: Pick<Report, "title" | "descript
   return (await callOpenAI("analyze_report_text", report)) || fallback;
 }
 
-export async function analyzeReportEvidence(input: Pick<Report, "title" | "description" | "category" | "image_url" | "image_storage_path">) {
-  const hasImage = Boolean(input.image_url || input.image_storage_path);
-  const fallback: EvidenceReview = {
-    status: hasImage ? "unclear" : "not_provided",
-    match_score: hasImage ? 55 : 0,
-    issue_likelihood: hasImage ? 55 : 0,
-    summary: hasImage
-      ? "Image evidence was uploaded. Vision AI can verify visual match when OPENAI_API_KEY is configured; the local fallback confirms evidence exists but cannot inspect image content."
-      : "No image evidence was uploaded for this report.",
-    flags: hasImage ? ["vision_review_unavailable"] : ["no_image"],
-    method: hasImage ? "local_heuristic" : "not_available",
-    checked_at: nowIso(),
-  };
-
-  if (!hasImage) return fallback;
-
-  const imageDataUrl = await readEvidenceImageAsDataUrl(input.image_storage_path);
-  const imageUrl = imageDataUrl || (input.image_url?.startsWith("http") ? input.image_url : null);
-  if (!imageUrl) return fallback;
-
-  const result = await callOpenAIWithImage(
-    "verify_report_evidence",
-    {
-      title: input.title,
-      description: input.description,
-      category: input.category,
-      requested_checks: [
-        "Does the image visually match the report title and description?",
-        "Does the image show a real public-space hazard or civic issue?",
-        "Are there reasons to reduce confidence?",
-      ],
-    },
-    imageUrl,
-  );
-
-  return normalizeEvidenceReview(result, fallback);
-}
 
 export async function classifyPublicSignal(signal: Pick<PublicSignal, "title" | "text" | "category" | "source_name">) {
   const fallback = {

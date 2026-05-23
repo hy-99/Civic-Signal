@@ -12,6 +12,7 @@ export function getEnv() {
     next_public_default_lng: Number(process.env.NEXT_PUBLIC_DEFAULT_LNG || DEFAULT_COORDS.lng),
     next_public_default_city: process.env.NEXT_PUBLIC_DEFAULT_CITY || DEFAULT_COORDS.city,
     openai_api_key: process.env.OPENAI_API_KEY || "",
+    groq_api_key: process.env.GROQ_API_KEY || "",
     news_api_key: process.env.NEWS_API_KEY || "",
     geocoding_provider: process.env.GEOCODING_PROVIDER || "",
     geocoding_api_key: process.env.GEOCODING_API_KEY || "",
@@ -35,3 +36,8 @@ export function hasMapConfig() {
 export function hasOpenAIConfig() {
   return Boolean(getEnv().openai_api_key);
 }
+
+export function hasGroqConfig() {
+  return Boolean(getEnv().groq_api_key);
+}
+

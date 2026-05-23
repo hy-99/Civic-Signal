@@ -75,7 +75,7 @@ export function ReportForm() {
     setServerError("");
 
     try {
-      let uploadResult: { image_url: string; image_storage_path: string } | null = null;
+      let uploadResult: { image_url: string; image_storage_path: string; image_analysis?: unknown } | null = null;
 
       if (selectedFile) {
         const formData = new FormData();
@@ -86,7 +86,7 @@ export function ReportForm() {
         });
         const uploadPayload = (await uploadResponse.json()) as {
           ok: boolean;
-          data?: { image_url: string; image_storage_path: string };
+          data?: { image_url: string; image_storage_path: string; image_analysis?: unknown };
           error?: string;
         };
 
@@ -105,6 +105,7 @@ export function ReportForm() {
           ...values,
           image_url: uploadResult?.image_url || null,
           image_storage_path: uploadResult?.image_storage_path || null,
+          image_analysis: uploadResult?.image_analysis || null,
         }),
       });
       const payload = (await response.json()) as { ok: boolean; data?: ReportCardView; error?: string };
@@ -115,7 +116,6 @@ export function ReportForm() {
       }
 
       router.push(`/app/reports/${payload.data.id}`);
-      router.refresh();
     } catch (submitError) {
       setServerError(submitError instanceof Error ? submitError.message : "Report submit failed. Please try again.");
     }
