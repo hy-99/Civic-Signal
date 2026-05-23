@@ -155,7 +155,7 @@ const SITUATION_TEMPLATES: SituationTemplate[] = [
     summary: (area) => `Possible smoke condition near ${area.label}. Official confirmation has not been found.`,
     category: "fire_smoke",
     urgency: "urgent",
-    status: "urgent",
+    status: "active",
     risk_score: 82,
     confidence_score: 55,
     source_type: "weather",

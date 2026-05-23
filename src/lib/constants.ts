@@ -42,6 +42,8 @@ export const REPORT_STATUSES: ReportStatus[] = [
 export const CLUSTER_STATUSES: RiskClusterStatus[] = [
   "active",
   "monitoring",
+  "in_progress",
+  "verified",
   "urgent",
   "resolved",
   "hidden",

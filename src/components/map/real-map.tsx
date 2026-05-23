@@ -39,6 +39,13 @@ function markerColor(risk: RiskLevel) {
   return "#94a3b8";
 }
 
+function verifiedGlowColor(risk: RiskLevel) {
+  if (risk === "urgent") return "#ef4444";
+  if (risk === "serious") return "#f97316";
+  if (risk === "watch") return "#eab308";
+  return "#f59e0b";
+}
+
 function createFallbackStyle(): StyleSpecification {
   return {
     version: 8,
@@ -71,14 +78,17 @@ function MapPin({
 }) {
   const color = markerColor(cluster.risk_level);
   const chipText = audience === "responder" ? String(cluster.risk_score) : "!";
+  const isInProgress = cluster.status === "in_progress";
+  const isVerified = cluster.status === "verified";
   return (
     <div
       className={cn(
         "cs-pin",
         selected && "cs-pin--selected",
-        cluster.risk_level === "urgent" && "cs-pin--urgent",
+        isInProgress && "cs-pin--gov-in-progress",
+        isVerified && "cs-pin--gov-verified",
       )}
-      style={{ "--cs-color": color } as CSSProperties}
+      style={{ "--cs-color": color, "--cs-status-color": verifiedGlowColor(cluster.risk_level) } as CSSProperties}
     >
       <span className="cs-pin__chip" aria-hidden="true">
         {chipText}
@@ -316,6 +326,15 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
 
   useEffect(() => {
     let cancelled = false;
+    let loaded = false;
+    let mapInstance: Map | null = null;
+    const fallbackTimer = window.setTimeout(() => {
+      if (cancelled || loaded) return;
+      setStatus("error");
+      onUnavailableRef.current?.();
+      mapInstance?.remove();
+      mapRef.current = null;
+    }, 5000);
 
     async function loadMap() {
       try {
@@ -331,11 +350,14 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
           zoom: 13,
           attributionControl: false,
         });
+        mapInstance = map;
 
         map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
         map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: false }, trackUserLocation: false }), "top-right");
         map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
         map.on("load", () => {
+          loaded = true;
+          window.clearTimeout(fallbackTimer);
           const initialClusters = initialClustersRef.current;
           if (initialClusters.length > 1) {
             const bounds = new maplibregl.LngLatBounds();
@@ -360,6 +382,7 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
 
     return () => {
       cancelled = true;
+      window.clearTimeout(fallbackTimer);
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
       rootsRef.current.forEach((root) => {

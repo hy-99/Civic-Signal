@@ -1,7 +1,15 @@
 export type UserRole = "user" | "moderator" | "admin";
 export type ReportStatus = "active" | "needs_review" | "verified" | "resolved" | "hidden" | "false_alarm" | "duplicate";
 export type PublicSignalStatus = "unmatched" | "matched" | "ignored" | "needs_review" | "hidden";
-export type RiskClusterStatus = "active" | "monitoring" | "urgent" | "resolved" | "hidden" | "false_alarm";
+export type RiskClusterStatus =
+  | "active"
+  | "monitoring"
+  | "in_progress"
+  | "verified"
+  | "urgent"
+  | "resolved"
+  | "hidden"
+  | "false_alarm";
 export type RiskLevel = "low" | "watch" | "serious" | "urgent";
 export type ConfidenceLabel = "very_low" | "low" | "medium" | "high" | "very_high";
 export type SourceType = "rss" | "city_alert" | "weather" | "traffic" | "news_api" | "manual" | "other";
@@ -61,6 +69,10 @@ export interface ImageAnalysisResult {
   pii_detected: boolean;
   pii_types: string[];
   recommended_action: string;
+  matches_claim?: boolean;
+  claim_mismatch_reason?: string;
+  suggested_title?: string;
+  suggested_category?: ReportCategoryKey;
 }
 
 export interface AnalysisJson {

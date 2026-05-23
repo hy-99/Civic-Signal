@@ -1,14 +1,75 @@
 import { CATEGORY_CONFIG, CONFIDENCE_LABELS, REPORT_SCORING } from "@/lib/constants";
 import type {
   ConfidenceLabel,
+  ImageAnalysisResult,
   PublicSignal,
   Report,
+  ReportCategoryKey,
   RiskCluster,
   RiskLevel,
   ScoreBreakdown,
   ScoreFactor,
 } from "@/lib/types";
 import { clamp, haversineDistanceMeters, isWithinHours } from "@/lib/utils";
+
+const NO_HAZARD_RISK_CAP = 20;
+const SEVERITY_RISK_CAP: Record<RiskLevel, number> = {
+  low: 24,
+  watch: 49,
+  serious: 74,
+  urgent: 100,
+};
+
+export function isRealImageAnalysis(
+  image_analysis: ImageAnalysisResult | null | undefined,
+): image_analysis is ImageAnalysisResult {
+  if (!image_analysis) return false;
+  if (image_analysis.danger_score <= 0) return false;
+  const details = (image_analysis.details_observed || "").toLowerCase();
+  if (details.startsWith("could not analyze")) return false;
+  const reasoning = (image_analysis.danger_reasoning || "").toLowerCase();
+  if (reasoning.includes("api key not configured")) return false;
+  return true;
+}
+
+export type ImageClaimMismatch = "no_hazard" | "wrong_category";
+
+export interface ImageClaimAssessment {
+  matches: boolean;
+  mismatch_kind: ImageClaimMismatch | null;
+  explanation: string;
+}
+
+export function assessImageClaimConsistency(
+  report: { title: string; description: string; category: ReportCategoryKey },
+  image_analysis: ImageAnalysisResult | null | undefined,
+): ImageClaimAssessment {
+  if (!isRealImageAnalysis(image_analysis)) {
+    return { matches: true, mismatch_kind: null, explanation: "" };
+  }
+
+  const observed = image_analysis.details_observed?.trim() || "";
+  const aiReason = image_analysis.claim_mismatch_reason?.trim();
+  const categoryLabel = CATEGORY_CONFIG[report.category].label;
+
+  if (image_analysis.confirms_hazard === false) {
+    const reason = aiReason ||
+      (observed
+        ? `The image shows: "${observed}". The AI did not detect a civic hazard, so it does not support a "${categoryLabel}" report.`
+        : `The AI did not detect any civic hazard in the image, so it does not support a "${categoryLabel}" report.`);
+    return { matches: false, mismatch_kind: "no_hazard", explanation: reason };
+  }
+
+  if (image_analysis.matches_claim === false) {
+    const reason = aiReason ||
+      (observed
+        ? `Your "${categoryLabel}" report does not match the image, which shows: "${observed}".`
+        : `The image does not appear to depict the "${categoryLabel}" issue described in your title or description.`);
+    return { matches: false, mismatch_kind: "wrong_category", explanation: reason };
+  }
+
+  return { matches: true, mismatch_kind: null, explanation: "" };
+}
 
 function detailedDescription(text: string) {
   return text.trim().length >= 30;
@@ -217,6 +278,27 @@ export function scoreReport(
   if (context.dispute_count > context.confirmation_count) {
     confidence_score -= 10;
     confidence_factors.push({ label: "Disputed by community", value: -10, type: "penalty" });
+  }
+
+  if (isRealImageAnalysis(imageAnalysis)) {
+    if (imageAnalysis.confirms_hazard === false && risk_score > NO_HAZARD_RISK_CAP) {
+      risk_factors.push({
+        label: "AI image shows no hazard — risk capped",
+        value: NO_HAZARD_RISK_CAP - risk_score,
+        type: "penalty",
+      });
+      risk_score = NO_HAZARD_RISK_CAP;
+    } else if (imageAnalysis.confirms_hazard === true) {
+      const cap = SEVERITY_RISK_CAP[imageAnalysis.severity_estimate];
+      if (typeof cap === "number" && risk_score > cap) {
+        risk_factors.push({
+          label: `AI image severity is ${imageAnalysis.severity_estimate} — risk capped`,
+          value: cap - risk_score,
+          type: "penalty",
+        });
+        risk_score = cap;
+      }
+    }
   }
 
   risk_score = clamp(risk_score, 0, 100);

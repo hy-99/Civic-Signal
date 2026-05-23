@@ -5,12 +5,10 @@ import { ConfidenceBadge, RiskBadge, StatusBadge } from "@/components/shared/bad
 import { ScoreBreakdown } from "@/components/shared/score-breakdown";
 import { ActionPlanCard, EvidenceCard, PageHeader } from "@/components/shared/states";
 import { VerificationButtons } from "@/components/shared/verification-buttons";
-import { getCurrentViewer } from "@/services/auth";
 import { getRiskClusterById } from "@/services/clusters";
 
 export default async function RiskDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const viewer = await getCurrentViewer();
   const cluster = await getRiskClusterById(id);
   if (!cluster) notFound();
 
@@ -35,7 +33,7 @@ export default async function RiskDetailPage({ params }: { params: Promise<{ id:
         <EvidenceCard title="Citizen Reports" body={cluster.reports.map((item) => item.title).join(", ") || "No linked reports."} />
         <EvidenceCard title="Public Signals" body={cluster.signals.map((item) => item.title).join(", ") || "No linked signals."} />
       </div>
-      {viewer && ["moderator", "admin"].includes(viewer.role) ? <ModerationPanel /> : null}
+      <ModerationPanel target_type="cluster" target_id={cluster.id} />
     </div>
   );
 }

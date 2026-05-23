@@ -63,7 +63,7 @@ export default async function ReportDetailPage({ params }: { params: Promise<{ i
           View cluster details
         </Link>
       ) : null}
-      {viewer && ["moderator", "admin"].includes(viewer.role) ? <ModerationPanel /> : null}
+      <ModerationPanel target_type="report" target_id={report.id} />
     </div>
   );
 }

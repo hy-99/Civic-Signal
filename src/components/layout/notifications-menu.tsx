@@ -18,6 +18,14 @@ type Notification = {
   created_at?: string;
 };
 
+type GovActionNotificationEvent = CustomEvent<{
+  id: string;
+  tone: "verified" | "progress" | "resolved";
+  title: string;
+  detail: string;
+  href?: string;
+}>;
+
 const DUMMY_NOTIFICATIONS: Notification[] = [
   {
     id: "n1",
@@ -84,6 +92,19 @@ function reportToNotification(report: ReportCardView): Notification {
   };
 }
 
+function govActionToNotification(detail: GovActionNotificationEvent["detail"]): Notification {
+  const tone: Tone = detail.tone === "progress" ? "info" : "ok";
+  return {
+    id: detail.id,
+    tone,
+    icon: detail.tone === "progress" ? "↻" : "✓",
+    title: detail.title,
+    detail: detail.detail,
+    href: detail.href,
+    created_at: new Date().toISOString(),
+  };
+}
+
 export function NotificationsMenu() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>(DUMMY_NOTIFICATIONS);
@@ -114,10 +135,20 @@ export function NotificationsMenu() {
     const onPublished = () => {
       void refresh();
     };
+    const onGovAction = (event: Event) => {
+      const detail = (event as GovActionNotificationEvent).detail;
+      if (!detail?.id || !detail.title || !detail.detail) return;
+      setItems((current) => {
+        const next = govActionToNotification(detail);
+        return [next, ...current.filter((item) => item.id !== next.id)].slice(0, 8);
+      });
+    };
     window.addEventListener("civicsignal:report-published", onPublished);
+    window.addEventListener("civicsignal:gov-action", onGovAction);
     return () => {
       cancelled = true;
       window.removeEventListener("civicsignal:report-published", onPublished);
+      window.removeEventListener("civicsignal:gov-action", onGovAction);
     };
   }, [refresh]);
 

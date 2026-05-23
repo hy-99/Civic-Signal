@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { findMatchingClusterInState } from "@/services/clusters";
+import {
+  applyClusterStatusToReportsInState,
+  findMatchingClusterInState,
+  getRiskClusterMapStatsFromState,
+  isPublicCluster,
+} from "@/services/clusters";
 import { createInitialState } from "@/lib/mock-data";
 
 test("nearby reports match an existing relevant cluster", () => {
@@ -34,4 +39,38 @@ test("related public-space reports can match existing nearby clusters", () => {
 
   assert.ok(match);
   assert.equal(match?.category, "road_hazard");
+});
+
+test("closed cluster statuses cascade to linked report cards", () => {
+  const state = createInitialState();
+  const clusterItem = state.cluster_items.find((item) => item.item_type === "report");
+  assert.ok(clusterItem);
+  const report = state.reports.find((item) => item.id === clusterItem.item_id);
+  assert.ok(report);
+  report.status = "active";
+
+  const updated = applyClusterStatusToReportsInState(state, clusterItem.cluster_id, "resolved");
+
+  assert.ok(updated > 0);
+  assert.equal(report.status, "resolved");
+});
+
+test("map stats count cleared clusters even though they are not public pins", () => {
+  const state = createInitialState();
+  assert.ok(state.risk_clusters.length >= 3);
+  const [resolvedCluster, falseAlarmCluster, verifiedCluster] = state.risk_clusters;
+  assert.ok(resolvedCluster);
+  assert.ok(falseAlarmCluster);
+  assert.ok(verifiedCluster);
+  resolvedCluster.status = "resolved";
+  falseAlarmCluster.status = "false_alarm";
+  verifiedCluster.status = "verified";
+
+  const stats = getRiskClusterMapStatsFromState(state);
+
+  assert.equal(isPublicCluster({ status: "resolved" }), false);
+  assert.equal(isPublicCluster({ status: "false_alarm" }), false);
+  assert.equal(isPublicCluster({ status: "verified" }), true);
+  assert.ok(stats.cleared >= 2);
+  assert.ok(stats.active >= 1);
 });

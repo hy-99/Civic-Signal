@@ -8,31 +8,43 @@ import type {
   Report,
   ReportUpdate,
   RiskCluster,
+  RiskClusterStatus,
   RiskClusterView,
 } from "@/lib/types";
 import { generateActionPlan, summarizeRiskCluster } from "@/services/ai";
 import { scoreCluster } from "@/services/scoring";
 import { averageCoordinates, createId, haversineDistanceMeters, nowIso } from "@/lib/utils";
 
-function getClusterItems(state: Awaited<ReturnType<typeof loadState>>, cluster_id: string) {
+type CivicState = Awaited<ReturnType<typeof loadState>>;
+
+const PUBLIC_CLUSTER_STATUSES = ["active", "monitoring", "in_progress", "verified", "urgent"] as const satisfies readonly RiskClusterStatus[];
+const CLEARED_CLUSTER_STATUSES = ["resolved", "false_alarm"] as const satisfies readonly RiskClusterStatus[];
+
+export type RiskClusterMapStats = {
+  active: number;
+  urgent: number;
+  cleared: number;
+};
+
+function getClusterItems(state: CivicState, cluster_id: string) {
   return state.cluster_items.filter((item) => item.cluster_id === cluster_id);
 }
 
-function getReportsForCluster(state: Awaited<ReturnType<typeof loadState>>, cluster_id: string) {
+function getReportsForCluster(state: CivicState, cluster_id: string) {
   return getClusterItems(state, cluster_id)
     .filter((item) => item.item_type === "report")
     .map((item) => state.reports.find((report) => report.id === item.item_id))
     .filter((item): item is Report => Boolean(item));
 }
 
-function getSignalsForCluster(state: Awaited<ReturnType<typeof loadState>>, cluster_id: string) {
+function getSignalsForCluster(state: CivicState, cluster_id: string) {
   return getClusterItems(state, cluster_id)
     .filter((item) => item.item_type === "signal")
     .map((item) => state.public_signals.find((signal) => signal.id === item.item_id))
     .filter((item): item is PublicSignal => Boolean(item));
 }
 
-function summarizeClusterVotes(state: Awaited<ReturnType<typeof loadState>>, cluster_id: string) {
+function summarizeClusterVotes(state: CivicState, cluster_id: string) {
   const votes = state.cluster_votes.filter((vote) => vote.cluster_id === cluster_id);
   return {
     confirm: votes.filter((vote) => vote.vote_type === "confirm").length,
@@ -46,8 +58,46 @@ function categoryMatches(left: Report["category"], right: Report["category"]) {
   return left === right || CATEGORY_CONFIG[left].related.includes(right) || CATEGORY_CONFIG[right].related.includes(left);
 }
 
-function isPublicCluster(cluster: RiskCluster) {
-  return ["active", "monitoring", "urgent", "in_progress", "resolved"].includes(cluster.status);
+export function isPublicCluster(cluster: Pick<RiskCluster, "status">) {
+  return (PUBLIC_CLUSTER_STATUSES as readonly RiskClusterStatus[]).includes(cluster.status);
+}
+
+export function getRiskClusterMapStatsFromState(state: CivicState): RiskClusterMapStats {
+  const publicClusters = state.risk_clusters.filter(isPublicCluster);
+  return {
+    active: publicClusters.length,
+    urgent: publicClusters.filter((cluster) => cluster.risk_level === "urgent" || cluster.risk_level === "serious").length,
+    cleared: state.risk_clusters.filter((cluster) => (CLEARED_CLUSTER_STATUSES as readonly RiskClusterStatus[]).includes(cluster.status)).length,
+  };
+}
+
+export function applyClusterStatusToReportsInState(state: CivicState, cluster_id: string, status: RiskClusterStatus) {
+  const reportStatus =
+    status === "resolved"
+      ? "resolved"
+      : status === "false_alarm"
+        ? "false_alarm"
+        : status === "hidden"
+          ? "hidden"
+          : null;
+
+  if (!reportStatus) return 0;
+
+  const reportIds = new Set(
+    state.cluster_items
+      .filter((item) => item.cluster_id === cluster_id && item.item_type === "report")
+      .map((item) => item.item_id),
+  );
+  let updated = 0;
+  for (const report of state.reports) {
+    if (!reportIds.has(report.id)) continue;
+    if (report.status !== reportStatus) {
+      report.status = reportStatus;
+      report.updated_at = nowIso();
+      updated += 1;
+    }
+  }
+  return updated;
 }
 
 function clusterWindowHours(category: Report["category"]) {
@@ -67,7 +117,7 @@ export function findMatchingClusterInState(
 ) {
   const windowHours = clusterWindowHours(item.category);
   const eligible = state.risk_clusters.filter((cluster) => {
-    if (!["active", "monitoring", "urgent", "in_progress"].includes(cluster.status)) return false;
+    if (!isPublicCluster(cluster)) return false;
     if (!categoryMatches(cluster.category, item.category)) return false;
     const distance = haversineDistanceMeters(
       { latitude: cluster.latitude, longitude: cluster.longitude },
@@ -160,7 +210,7 @@ export async function createClusterFromReportInState(state: Awaited<ReturnType<t
     title: `Possible ${CATEGORY_CONFIG[report.category].label.toLowerCase()} near ${report.address_text || "reported area"}`,
     summary: report.analysis_summary,
     category: report.category,
-    status: report.urgency === "urgent" ? "urgent" : "active",
+    status: "active",
     latitude: report.latitude,
     longitude: report.longitude,
     radius_meters: CATEGORY_CONFIG[report.category].cluster_radius_meters,
@@ -196,7 +246,7 @@ export async function createClusterFromSignalInState(state: Awaited<ReturnType<t
     title: `Possible ${CATEGORY_CONFIG[signal.category].label.toLowerCase()} near ${signal.address_text || "signal area"}`,
     summary: signal.analysis_summary,
     category: signal.category,
-    status: signal.risk_score >= 75 ? "urgent" : "active",
+    status: "active",
     latitude: signal.latitude ?? 0,
     longitude: signal.longitude ?? 0,
     radius_meters: CATEGORY_CONFIG[signal.category].cluster_radius_meters,
@@ -259,7 +309,7 @@ export async function linkSignalToClusterInState(state: Awaited<ReturnType<typeo
   return createClusterFromSignalInState(state, signal);
 }
 
-function buildClusterView(state: Awaited<ReturnType<typeof loadState>>, cluster: RiskCluster): RiskClusterView {
+function buildClusterView(state: CivicState, cluster: RiskCluster): RiskClusterView {
   const reports = getReportsForCluster(state, cluster.id);
   const signals = getSignalsForCluster(state, cluster.id);
   return {
@@ -289,6 +339,11 @@ export async function getRiskClusters(params?: MapFilters & { include_hidden?: b
   });
 
   return items.map((cluster) => buildClusterView(state, cluster));
+}
+
+export async function getRiskClusterMapStats() {
+  const state = await loadState();
+  return getRiskClusterMapStatsFromState(state);
 }
 
 export async function getRiskClusterById(id: string) {
@@ -369,6 +424,7 @@ export async function updateClusterStatus(id: string, status: RiskCluster["statu
     if (!cluster) throw new Error("Cluster not found.");
     cluster.status = status;
     cluster.updated_at = nowIso();
+    applyClusterStatusToReportsInState(state, id, status);
     await recalculateClusterInState(state, id);
     return cluster;
   });

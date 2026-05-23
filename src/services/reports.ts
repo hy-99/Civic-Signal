@@ -2,18 +2,54 @@ import { loadState, withMutableState } from "@/lib/data-store";
 import type {
   AnalysisJson,
   AuthViewer,
+  ImageAnalysisResult,
   MapFilters,
   Report,
   ReportCardView,
   ReportStatus,
   ReportVoteType,
 } from "@/lib/types";
-import { analyzeReportText } from "@/services/ai";
-import { linkReportToClusterInState, recalculateClusterInState } from "@/services/clusters";
+import { analyzeReportText, checkClaimImageConsistency } from "@/services/ai";
+import { CATEGORY_CONFIG } from "@/lib/constants";
+import { isRealImageAnalysis } from "@/services/scoring";
+import { isPublicCluster, linkReportToClusterInState, recalculateClusterInState } from "@/services/clusters";
 import { geocodeAddress } from "@/services/geocoding";
 import { checkReportForModeration } from "@/services/moderation";
-import { scoreReport } from "@/services/scoring";
+import { assessImageClaimConsistency, scoreReport } from "@/services/scoring";
+import type { ImageClaimMismatch } from "@/services/scoring";
 import { createId, nowIso } from "@/lib/utils";
+
+export class ImageClaimMismatchError extends Error {
+  mismatch_kind: ImageClaimMismatch;
+  details_observed: string;
+  danger_reasoning: string;
+  explanation: string;
+  suggested_title: string | null;
+  suggested_category: string | null;
+  constructor(
+    image_analysis: ImageAnalysisResult,
+    mismatch_kind: ImageClaimMismatch,
+    explanation: string,
+    suggestions?: { suggested_title?: string | null; suggested_category?: string | null },
+  ) {
+    const observed = image_analysis.details_observed?.trim() || "no civic hazard";
+    const reasoning = image_analysis.danger_reasoning?.trim() || "The image does not support the report.";
+    const headline =
+      mismatch_kind === "no_hazard"
+        ? "This image does not appear to show a civic hazard, so the report will not be published."
+        : "The image does not match your title or description, so the report will not be published.";
+    super(`${headline} ${explanation}`);
+    this.name = "ImageClaimMismatchError";
+    this.mismatch_kind = mismatch_kind;
+    this.details_observed = observed;
+    this.danger_reasoning = reasoning;
+    this.explanation = explanation;
+    const titleFromImage = (suggestions?.suggested_title ?? image_analysis.suggested_title ?? "").trim();
+    this.suggested_title = titleFromImage || null;
+    const categoryFromImage = (suggestions?.suggested_category ?? image_analysis.suggested_category ?? "").trim();
+    this.suggested_category = categoryFromImage || null;
+  }
+}
 
 function reportVoteSummary(state: Awaited<ReturnType<typeof loadState>>, report_id: string) {
   const votes = state.report_votes.filter((vote) => vote.report_id === report_id);
@@ -26,13 +62,32 @@ function reportVoteSummary(state: Awaited<ReturnType<typeof loadState>>, report_
 }
 
 function reportIsPublic(report: Report) {
-  return ["active", "needs_review", "verified", "resolved"].includes(report.status);
+  if (["active", "verified", "resolved"].includes(report.status)) return true;
+  return report.status === "needs_review" && report.moderation_flag === "image_review_needed";
 }
 
-function canViewReport(report: Report, viewer?: AuthViewer | null) {
-  if (reportIsPublic(report)) return true;
-  if (!viewer) return false;
-  return viewer.id === report.user_id || ["moderator", "admin"].includes(viewer.role);
+function viewerCanBypassPublicVisibility(report: Report, viewer?: AuthViewer | null) {
+  return Boolean(viewer && (viewer.id === report.user_id || ["moderator", "admin"].includes(viewer.role)));
+}
+
+function reportClusterIsPublic(state: Awaited<ReturnType<typeof loadState>>, report: Report) {
+  if (!report.cluster_id) return true;
+  const cluster = state.risk_clusters.find((item) => item.id === report.cluster_id);
+  return cluster ? isPublicCluster(cluster) : false;
+}
+
+function canViewReport(state: Awaited<ReturnType<typeof loadState>>, report: Report, viewer?: AuthViewer | null) {
+  if (viewerCanBypassPublicVisibility(report, viewer)) return true;
+  return reportIsPublic(report) && reportClusterIsPublic(state, report);
+}
+
+function canShowReportOnLiveMap(state: Awaited<ReturnType<typeof loadState>>, report: Report) {
+  const isOpenPublicReport =
+    ["active", "verified"].includes(report.status) ||
+    (report.status === "needs_review" && report.moderation_flag === "image_review_needed");
+  if (!isOpenPublicReport) return false;
+  if (!report.cluster_id) return false;
+  return reportClusterIsPublic(state, report);
 }
 
 async function recalculateReportScoreInState(state: Awaited<ReturnType<typeof loadState>>, report_id: string) {
@@ -109,6 +164,39 @@ export async function createReport(
   },
   viewer?: AuthViewer | null,
 ) {
+  const image_analysis = (input.image_analysis as ImageAnalysisResult | null | undefined) || null;
+  const claimAssessment = assessImageClaimConsistency(
+    { title: input.title, description: input.description, category: input.category },
+    image_analysis,
+  );
+  if (!claimAssessment.matches && image_analysis && claimAssessment.mismatch_kind) {
+    throw new ImageClaimMismatchError(image_analysis, claimAssessment.mismatch_kind, claimAssessment.explanation);
+  }
+
+  if (
+    image_analysis &&
+    isRealImageAnalysis(image_analysis) &&
+    image_analysis.confirms_hazard === true &&
+    typeof image_analysis.matches_claim !== "boolean"
+  ) {
+    const verdict = await checkClaimImageConsistency(
+      {
+        title: input.title,
+        description: input.description,
+        category_label: CATEGORY_CONFIG[input.category].label,
+      },
+      image_analysis.details_observed || "",
+    );
+    if (verdict && verdict.matches === false) {
+      image_analysis.matches_claim = false;
+      image_analysis.claim_mismatch_reason = verdict.reason;
+      throw new ImageClaimMismatchError(image_analysis, "wrong_category", verdict.reason, {
+        suggested_title: verdict.suggested_title,
+        suggested_category: verdict.suggested_category,
+      });
+    }
+  }
+
   let latitude = input.latitude ?? null;
   let longitude = input.longitude ?? null;
   const addressText = input.address_text?.trim() || null;
@@ -204,9 +292,11 @@ export async function createReport(
   });
 }
 
-export async function getReports(params?: MapFilters & { viewer?: AuthViewer | null }) {
+export async function getReports(params?: MapFilters & { viewer?: AuthViewer | null; live_map?: boolean }) {
   const state = await loadState();
-  let items = state.reports.filter((report) => canViewReport(report, params?.viewer));
+  let items = state.reports.filter((report) =>
+    params?.live_map ? canShowReportOnLiveMap(state, report) : canViewReport(state, report, params?.viewer),
+  );
 
   if (params?.category && params.category !== "all") items = items.filter((report) => report.category === params.category);
   if (params?.risk_level && params.risk_level !== "all") items = items.filter((report) => report.analysis_json.score_breakdown.risk_level === params.risk_level);
@@ -225,7 +315,7 @@ export async function getReports(params?: MapFilters & { viewer?: AuthViewer | n
 export async function getReportById(id: string, viewer?: AuthViewer | null) {
   const state = await loadState();
   const report = state.reports.find((item) => item.id === id);
-  if (!report || !canViewReport(report, viewer)) return null;
+  if (!report || !canViewReport(state, report, viewer)) return null;
   return buildReportView(state, report);
 }
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   AlertTriangle,
   Building2,
@@ -12,6 +12,7 @@ import {
 
 import { CATEGORY_OPTIONS } from "@/lib/constants";
 import type { AuthViewer, ReportCardView, ReportCategoryKey, RiskClusterView, RiskLevel } from "@/lib/types";
+import type { RiskClusterMapStats } from "@/services/clusters";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { RiskBadge, StatusBadge } from "@/components/shared/badges";
 import { RealMap, type FocusLocation, type MapAudience } from "@/components/map/real-map";
@@ -22,6 +23,7 @@ type CommandCenterProps = {
   clusters: RiskClusterView[];
   reports: ReportCardView[];
   viewer?: AuthViewer | null;
+  clusterStats?: RiskClusterMapStats;
   submitMode?: boolean;
   children?: React.ReactNode;
 };
@@ -32,9 +34,66 @@ function isResponder(viewer?: AuthViewer | null) {
   return Boolean(viewer && (RESPONDER_ROLES as readonly string[]).includes(viewer.role));
 }
 
+type ResponderClusterAction = "mark_verified" | "mark_in_progress" | "mark_resolved";
+
 type ReportAction =
   | { kind: "citizen"; vote: "confirm" | "resolved" }
-  | { kind: "responder"; status: "verified" | "false_alarm" };
+  | { kind: "responder"; cluster_action: ResponderClusterAction; cluster_id: string | null };
+
+type GovActionToast = {
+  id: string;
+  tone: "verified" | "progress" | "resolved";
+  title: string;
+  detail: string;
+};
+
+function verifiedGlowClass(riskLevel: RiskLevel) {
+  if (riskLevel === "urgent") {
+    return "shadow-[0_0_0_1.75px_rgba(239,68,68,0.42),0_0_28px_5px_rgba(239,68,68,0.2)]";
+  }
+  if (riskLevel === "serious") {
+    return "shadow-[0_0_0_1.75px_rgba(249,115,22,0.42),0_0_28px_5px_rgba(249,115,22,0.2)]";
+  }
+  if (riskLevel === "watch") {
+    return "shadow-[0_0_0_1.75px_rgba(234,179,8,0.46),0_0_28px_5px_rgba(234,179,8,0.22)]";
+  }
+  return "shadow-[0_0_0_1.75px_rgba(245,158,11,0.44),0_0_28px_5px_rgba(245,158,11,0.2)]";
+}
+
+function govActionCopy(action: ResponderClusterAction, reportTitle: string) {
+  const shortTitle = reportTitle.length > 58 ? `${reportTitle.slice(0, 55)}…` : reportTitle;
+  if (action === "mark_verified") {
+    return {
+      tone: "verified" as const,
+      title: "Government verified hazard",
+      detail: `${shortTitle} now appears as officially confirmed for citizens.`,
+    };
+  }
+  if (action === "mark_in_progress") {
+    return {
+      tone: "progress" as const,
+      title: "Response marked in progress",
+      detail: `${shortTitle} now shows a blue response status on the public map.`,
+    };
+  }
+  return {
+    tone: "resolved" as const,
+    title: "Hazard removed from public map",
+    detail: `${shortTitle} is now cleared from citizen-facing map results.`,
+  };
+}
+
+function govToastClass(tone: GovActionToast["tone"]) {
+  if (tone === "verified") return "border-emerald-200 bg-emerald-50 text-emerald-900 shadow-emerald-200/70";
+  if (tone === "progress") return "border-sky-200 bg-sky-50 text-sky-900 shadow-sky-200/70";
+  return "border-rose-200 bg-rose-50 text-rose-900 shadow-rose-200/70";
+}
+
+function govToastDotClass(tone: GovActionToast["tone"]) {
+  if (tone === "verified") return "bg-emerald-500 shadow-[0_0_18px_rgba(16,185,129,0.42)]";
+  if (tone === "progress") return "bg-sky-500 shadow-[0_0_18px_rgba(14,165,233,0.42)]";
+  return "bg-rose-500 shadow-[0_0_18px_rgba(244,63,94,0.42)]";
+}
 
 const AUDIENCE_COPY = {
   citizen: {
@@ -83,12 +142,24 @@ function HazardListItem({
           ? "border-l-yellow-400"
           : "border-l-slate-300";
 
+  // Government status is cluster-level, so the card halo mirrors the same
+  // cluster risk color used by the map pin instead of the individual report.
+  const clusterStatus = report.cluster?.status;
+  const clusterRiskLevel = report.cluster?.risk_level ?? report.risk_level;
+  let govGlow: string | null = null;
+  if (clusterStatus === "in_progress") {
+    govGlow = "shadow-[0_0_0_1.75px_rgba(37,99,235,0.42),0_0_28px_5px_rgba(37,99,235,0.2)]";
+  } else if (clusterStatus === "verified") {
+    govGlow = verifiedGlowClass(clusterRiskLevel);
+  }
+
   return (
     <article
       onClick={onSelect}
       className={cn(
         "cursor-pointer overflow-hidden rounded-xl border border-l-4 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
         riskAccent,
+        govGlow,
         selected ? "border-blue-400 bg-blue-50 ring-2 ring-blue-300 shadow-md" : "border-slate-200",
       )}
     >
@@ -174,7 +245,7 @@ function HazardListItem({
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                onAction(report.id, { kind: "responder", status: "verified" });
+                onAction(report.id, { kind: "responder", cluster_action: "mark_verified", cluster_id: report.cluster_id });
               }}
               className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black text-emerald-700 shadow-sm shadow-emerald-100 transition hover:-translate-y-0.5 hover:border-emerald-300 hover:bg-emerald-100 hover:text-emerald-800"
             >
@@ -184,7 +255,7 @@ function HazardListItem({
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                onAction(report.id, { kind: "responder", status: "verified" });
+                onAction(report.id, { kind: "responder", cluster_action: "mark_in_progress", cluster_id: report.cluster_id });
               }}
               className="rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-black text-sky-700 shadow-sm shadow-sky-100 transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-100 hover:text-sky-800"
             >
@@ -194,7 +265,7 @@ function HazardListItem({
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                onAction(report.id, { kind: "responder", status: "false_alarm" });
+                onAction(report.id, { kind: "responder", cluster_action: "mark_resolved", cluster_id: report.cluster_id });
               }}
               className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-black text-rose-700 shadow-sm shadow-rose-100 transition hover:-translate-y-0.5 hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800"
             >
@@ -276,17 +347,26 @@ function AudienceToggle({
   );
 }
 
-export function CommandCenter({ clusters, reports, viewer, submitMode = false, children }: CommandCenterProps) {
+export function CommandCenter({ clusters, reports, viewer, clusterStats, submitMode = false, children }: CommandCenterProps) {
   const router = useRouter();
   const viewerIsResponder = isResponder(viewer);
-  const [selectedId, setSelectedId] = useState<string | null>(clusters[0]?.id ?? null);
+  // Start with no cluster selected so we don't auto-highlight any pins or
+  // cards on first load. The user picks what they want to focus on.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<ReportCategoryKey | "all">("all");
   const [risk, setRisk] = useState<RiskLevel | "all">("all");
   const [audience, setAudience] = useState<MapAudience>(viewerIsResponder ? "responder" : "citizen");
   const [notice, setNotice] = useState("");
+  const [govActionToast, setGovActionToast] = useState<GovActionToast | null>(null);
   const [focusLocation, setFocusLocation] = useState<FocusLocation | null>(null);
   const [, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (!govActionToast) return;
+    const timeout = window.setTimeout(() => setGovActionToast(null), 5200);
+    return () => window.clearTimeout(timeout);
+  }, [govActionToast]);
 
   const pickLocation = (option: LocationOption) => {
     setFocusLocation({
@@ -307,7 +387,7 @@ export function CommandCenter({ clusters, reports, viewer, submitMode = false, c
       .sort((a, b) => b.risk_score - a.risk_score || b.confidence_score - a.confidence_score);
   }, [category, clusters, query, risk]);
 
-  const selected = filteredClusters.find((cluster) => cluster.id === selectedId) || filteredClusters[0] || null;
+  const selected = selectedId ? filteredClusters.find((cluster) => cluster.id === selectedId) || null : null;
 
   const filteredReports = useMemo(() => {
     const queryText = query.toLowerCase();
@@ -330,19 +410,20 @@ export function CommandCenter({ clusters, reports, viewer, submitMode = false, c
     return ranks;
   }, [filteredReports]);
 
-  const activeCount = clusters.filter((cluster) => cluster.status === "active" || cluster.status === "monitoring" || cluster.status === "urgent").length;
-  const urgentCount = clusters.filter((cluster) => cluster.risk_level === "urgent" || cluster.risk_level === "serious").length;
-  const resolvedCount = clusters.filter((cluster) => cluster.status === "resolved").length;
+  const activeCount = clusterStats?.active ?? clusters.length;
+  const urgentCount = clusterStats?.urgent ?? clusters.filter((cluster) => cluster.risk_level === "urgent" || cluster.risk_level === "serious").length;
+  const resolvedCount = clusterStats?.cleared ?? 0;
 
   const audienceCopy = AUDIENCE_COPY[audience];
   const statValues = { active: activeCount, urgent: urgentCount, resolved: resolvedCount } as Record<string, number>;
 
   const handleReportAction = (reportId: string, action: ReportAction) => {
-    if (action.kind === "responder" && !viewerIsResponder) {
-      setNotice("Government / police access is required for that action.");
+    if (action.kind === "responder" && !action.cluster_id) {
+      setNotice("This report isn't linked to a cluster yet, so it can't be marked on the map.");
       return;
     }
     startTransition(async () => {
+      const actedReport = reports.find((report) => report.id === reportId) || null;
       const response =
         action.kind === "citizen"
           ? await fetch(`/api/reports/${reportId}/vote`, {
@@ -350,10 +431,14 @@ export function CommandCenter({ clusters, reports, viewer, submitMode = false, c
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ vote_type: action.vote }),
             })
-          : await fetch(`/api/reports/${reportId}`, {
-              method: "PATCH",
+          : await fetch(`/api/admin/moderate`, {
+              method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ status: action.status }),
+              body: JSON.stringify({
+                target_type: "cluster",
+                target_id: action.cluster_id,
+                action: action.cluster_action,
+              }),
             });
       const payload = (await response.json()) as { ok: boolean; error?: string };
       const label =
@@ -361,11 +446,34 @@ export function CommandCenter({ clusters, reports, viewer, submitMode = false, c
           ? action.vote === "confirm"
             ? "verified"
             : "marked not there"
-          : action.status === "verified"
-            ? "government confirmed"
-            : "removed from public map";
+          : action.cluster_action === "mark_verified"
+            ? "marked as verified (pin gets a confirmed-risk glow)"
+            : action.cluster_action === "mark_in_progress"
+              ? "marked in progress (pin glows blue)"
+              : "marked resolved (removed from the map)";
       setNotice(payload.ok ? `Saved: ${label}.` : payload.error || "Unable to update hazard.");
-      if (payload.ok) router.refresh();
+      if (payload.ok) {
+        if (action.kind === "responder") {
+          const copy = govActionCopy(action.cluster_action, actedReport?.title || "Selected hazard");
+          const toast: GovActionToast = {
+            id: `${action.cluster_action}:${action.cluster_id}:${Date.now()}`,
+            ...copy,
+          };
+          setGovActionToast(toast);
+          window.dispatchEvent(
+            new CustomEvent("civicsignal:gov-action", {
+              detail: {
+                id: toast.id,
+                tone: toast.tone,
+                title: toast.title,
+                detail: toast.detail,
+                href: actedReport ? `/app/reports/${actedReport.id}` : undefined,
+              },
+            }),
+          );
+        }
+        router.refresh();
+      }
     });
   };
 
@@ -376,6 +484,24 @@ export function CommandCenter({ clusters, reports, viewer, submitMode = false, c
 
   return (
     <div className={cn("civic-map-entrance relative h-full min-h-0 overflow-y-auto bg-[#eef3f8] lg:overflow-hidden", submitMode && "pointer-events-none select-none")}>
+      {govActionToast ? (
+        <aside
+          className={cn(
+            "civic-gov-action-toast pointer-events-none absolute right-4 top-4 z-30 max-w-[340px] rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur-md",
+            govToastClass(govActionToast.tone),
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3">
+            <span className={cn("mt-1 h-2.5 w-2.5 shrink-0 rounded-full", govToastDotClass(govActionToast.tone))} aria-hidden="true" />
+            <div>
+              <p className="text-sm font-black tracking-[-0.01em]">{govActionToast.title}</p>
+              <p className="mt-1 text-xs font-semibold leading-5 opacity-80">{govActionToast.detail}</p>
+            </div>
+          </div>
+        </aside>
+      ) : null}
       <div className={cn("min-h-full p-2 lg:h-full lg:min-h-0 lg:p-3", submitMode && "scale-[0.985] blur-[3px] brightness-75")}>
         <div className="civic-command-grid min-h-full gap-2 lg:h-full lg:min-h-0">
           {/* LEFT: Hazard list sidebar */}

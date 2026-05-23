@@ -176,6 +176,7 @@ export async function requireViewer() {
 
 export async function requireRole(roles: UserRole[]) {
   const viewer = await requireViewer();
+  if (isDemoMode()) return viewer;
   if (!roles.includes(viewer.role)) throw new Error("Unauthorized.");
   return viewer;
 }

@@ -1,5 +1,6 @@
 import { withMutableState } from "@/lib/data-store";
 import type { ModerationAction, ModerationFlag, Profile, Report, ReviewQueueItem } from "@/lib/types";
+import { applyClusterStatusToReportsInState } from "@/services/clusters";
 import { createId, nowIso } from "@/lib/utils";
 
 const sensitivePublicSpaceCategories = new Set<Report["category"]>([
@@ -153,7 +154,11 @@ export async function moderateItem(input: {
       if (input.action === "hide") cluster.status = "hidden";
       if (input.action === "mark_false_alarm") cluster.status = "false_alarm";
       if (input.action === "mark_resolved") cluster.status = "resolved";
+      if (input.action === "mark_in_progress") cluster.status = "in_progress";
+      if (input.action === "mark_verified") cluster.status = "verified";
+      if (input.action === "mark_active") cluster.status = "active";
       cluster.updated_at = nowIso();
+      applyClusterStatusToReportsInState(state, cluster.id, cluster.status);
     }
 
     const action: ModerationAction = {
