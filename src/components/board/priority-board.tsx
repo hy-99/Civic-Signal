@@ -2,12 +2,30 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Compass, Crosshair, Flame, MapPin, ShieldCheck, ThumbsUp, Timer } from "lucide-react";
+import { Compass, Crosshair, Flame, MapPin, ShieldCheck, ThumbsUp, Timer, Zap } from "lucide-react";
 
 import { DEFAULT_COORDS, CATEGORY_CONFIG } from "@/lib/constants";
 import type { ReportCardView } from "@/lib/types";
 import { ConfidenceBadge, RiskBadge, StatusBadge } from "@/components/shared/badges";
 import { cn, formatRelativeTime, haversineDistanceMeters } from "@/lib/utils";
+
+function aiDangerScore(report: ReportCardView): number | null {
+  return report.analysis_json.image_analysis?.danger_score ?? null;
+}
+
+function dangerScoreColor(score: number) {
+  if (score >= 71) return "text-rose-700";
+  if (score >= 51) return "text-orange-600";
+  if (score >= 31) return "text-amber-600";
+  return "text-emerald-700";
+}
+
+function dangerScoreAccent(score: number) {
+  if (score >= 71) return "border-l-rose-500";
+  if (score >= 51) return "border-l-orange-500";
+  if (score >= 31) return "border-l-yellow-400";
+  return "border-l-slate-300";
+}
 
 type SortKey = "danger" | "closest" | "recent" | "confirmed";
 
@@ -75,7 +93,12 @@ export function PriorityBoard({ reports }: { reports: ReportCardView[] }) {
       items.sort((a, b) => +new Date(b.report.created_at) - +new Date(a.report.created_at));
     else if (sortKey === "confirmed")
       items.sort((a, b) => b.report.vote_summary.confirm - a.report.vote_summary.confirm);
-    else items.sort((a, b) => b.report.risk_score - a.report.risk_score);
+    else
+      items.sort((a, b) => {
+        const da = aiDangerScore(a.report) ?? a.report.risk_score;
+        const db = aiDangerScore(b.report) ?? b.report.risk_score;
+        return db - da;
+      });
 
     return items;
   }, [reports, sortKey, effectiveOrigin]);
@@ -144,53 +167,69 @@ export function PriorityBoard({ reports }: { reports: ReportCardView[] }) {
       </section>
 
       <ol className="grid gap-3">
-        {ranked.map(({ report, distance_m }, index) => (
-          <li key={report.id}>
-            <Link
-              href={`/app/reports/${report.id}`}
-              className={cn(
-                "grid grid-cols-[44px_1fr_auto] items-center gap-4 rounded-2xl border border-slate-200 border-l-4 bg-white px-5 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-                riskAccentClass(report.risk_level),
-              )}
-            >
-              <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-base font-black text-slate-700">
-                {index + 1}
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-base font-black tracking-[-0.02em] text-slate-950">{report.title}</h3>
-                  <RiskBadge risk_level={report.risk_level} />
-                  <ConfidenceBadge confidence_label={report.confidence_label} />
-                  <StatusBadge status={report.status} />
+        {ranked.map(({ report, distance_m }, index) => {
+          const dangerScore = aiDangerScore(report);
+          const accentClass = dangerScore !== null ? dangerScoreAccent(dangerScore) : riskAccentClass(report.risk_level);
+          return (
+            <li key={report.id}>
+              <Link
+                href={`/app/reports/${report.id}`}
+                className={cn(
+                  "grid grid-cols-[44px_1fr_auto] items-center gap-4 rounded-2xl border border-slate-200 border-l-4 bg-white px-5 py-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                  accentClass,
+                )}
+              >
+                <div className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-base font-black text-slate-700">
+                  {index + 1}
                 </div>
-                <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">
-                  {report.analysis_summary || report.description}
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-                  <span className="inline-flex items-center gap-1">
-                    <MapPin className="h-3.5 w-3.5" />
-                    {report.address_text || "Location pending"}
-                  </span>
-                  <span>{CATEGORY_CONFIG[report.category].label}</span>
-                  <span>{formatRelativeTime(report.created_at)}</span>
-                  <span className="inline-flex items-center gap-1">
-                    <ThumbsUp className="h-3.5 w-3.5" /> {report.vote_summary.confirm} confirmed
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <Compass className="h-3.5 w-3.5" /> {formatDistance(distance_m)} away
-                  </span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="truncate text-base font-black tracking-[-0.02em] text-slate-950">{report.title}</h3>
+                    <RiskBadge risk_level={report.risk_level} />
+                    <ConfidenceBadge confidence_label={report.confidence_label} />
+                    <StatusBadge status={report.status} />
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-600">
+                    {report.analysis_summary || report.description}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+                    <span className="inline-flex items-center gap-1">
+                      <MapPin className="h-3.5 w-3.5" />
+                      {report.address_text || "Location pending"}
+                    </span>
+                    <span>{CATEGORY_CONFIG[report.category].label}</span>
+                    <span>{formatRelativeTime(report.created_at)}</span>
+                    <span className="inline-flex items-center gap-1">
+                      <ThumbsUp className="h-3.5 w-3.5" /> {report.vote_summary.confirm} confirmed
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <Compass className="h-3.5 w-3.5" /> {formatDistance(distance_m)} away
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <div className="grid place-items-end text-right">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Risk</p>
-                <p className="text-2xl font-black text-slate-950">{report.risk_score}</p>
-                <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  Confidence {report.confidence_score}
-                </p>
-              </div>
-            </Link>
-          </li>
-        ))}
+                {dangerScore !== null ? (
+                  <div className="grid place-items-end text-right">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-600">
+                      <Zap className="h-3 w-3" /> AI Danger
+                    </span>
+                    <p className={cn("text-2xl font-black", dangerScoreColor(dangerScore))}>{dangerScore}</p>
+                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      / 100
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid place-items-end text-right">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Risk</p>
+                    <p className="text-2xl font-black text-slate-950">{report.risk_score}</p>
+                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Confidence {report.confidence_score}
+                    </p>
+                  </div>
+                )}
+              </Link>
+            </li>
+          );
+        })}
         {ranked.length === 0 ? (
           <li className="rounded-2xl border border-dashed border-slate-200 bg-white px-6 py-12 text-center text-sm text-slate-500">
             No active hazards yet. Submit one from the map to see it ranked here.
