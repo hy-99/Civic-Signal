@@ -28,6 +28,8 @@ export function ReportForm() {
   const router = useRouter();
   const [serverError, setServerError] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [geocodeStatus, setGeocodeStatus] = useState<"idle" | "loading" | "found" | "failed">("idle");
+  const [geocodedLabel, setGeocodedLabel] = useState<string | null>(null);
   const submitRef = useRef<HTMLButtonElement | null>(null);
   const form = useForm<ReportValues>({
     resolver: zodResolver(reportCreateSchema),
@@ -61,11 +63,35 @@ export function ReportForm() {
     if (submitRef.current) submitRef.current.dataset.civicClientReady = "true";
   }, []);
 
+  const geocodeAddressText = async (address: string) => {
+    const trimmed = address.trim();
+    if (!trimmed) return;
+    const hasCoords = typeof form.getValues("latitude") === "number" && typeof form.getValues("longitude") === "number";
+    if (hasCoords) return;
+    setGeocodeStatus("loading");
+    try {
+      const res = await fetch(`/api/geocode?query=${encodeURIComponent(trimmed)}`);
+      const payload = (await res.json()) as { ok: boolean; data?: { latitude: number; longitude: number; formatted_address?: string }; error?: string };
+      if (payload.ok && payload.data && Number.isFinite(payload.data.latitude) && Number.isFinite(payload.data.longitude)) {
+        form.setValue("latitude", payload.data.latitude, { shouldDirty: true, shouldValidate: true });
+        form.setValue("longitude", payload.data.longitude, { shouldDirty: true, shouldValidate: true });
+        setGeocodedLabel(payload.data.formatted_address || trimmed);
+        setGeocodeStatus("found");
+      } else {
+        setGeocodeStatus("failed");
+      }
+    } catch {
+      setGeocodeStatus("failed");
+    }
+  };
+
   const useCurrentLocation = () => {
     navigator.geolocation.getCurrentPosition(
       (position) => {
         form.setValue("latitude", position.coords.latitude, { shouldDirty: true, shouldValidate: true });
         form.setValue("longitude", position.coords.longitude, { shouldDirty: true, shouldValidate: true });
+        setGeocodeStatus("idle");
+        setGeocodedLabel(null);
       },
       () => setServerError("Location permission denied."),
     );
@@ -170,7 +196,9 @@ export function ReportForm() {
               <Input
                 className={fieldClassName}
                 placeholder="Search by intersection, corridor, or place name"
-                {...form.register("address_text")}
+                {...form.register("address_text", {
+                  onBlur: (e) => geocodeAddressText(e.target.value),
+                })}
               />
             </Field>
             <FieldError message={errors.address_text?.message} />
@@ -178,13 +206,19 @@ export function ReportForm() {
 
           <div className="grid gap-3 rounded-xl border border-emerald-100 bg-emerald-50/80 p-3 md:grid-cols-[1fr_auto] md:items-center">
             <div className="flex items-start gap-3">
-              <MapPin className="mt-1 h-4 w-4 text-emerald-600" />
+              <MapPin className={`mt-1 h-4 w-4 ${geocodeStatus === "found" || (typeof latitudeValue === "number" && typeof longitudeValue === "number") ? "text-emerald-600" : geocodeStatus === "failed" ? "text-amber-500" : "text-slate-400"}`} />
               <div>
                 <p className="text-sm font-semibold text-slate-950">Location confirmation</p>
                 <p className="mt-1 text-sm text-slate-600">
-                  {typeof latitudeValue === "number" && typeof longitudeValue === "number"
-                    ? `Coordinates captured: ${latitudeValue.toFixed(4)}, ${longitudeValue.toFixed(4)}`
-                    : "Add an address above, use your current location, or enter coordinates manually."}
+                  {geocodeStatus === "loading"
+                    ? "Looking up address…"
+                    : geocodeStatus === "found" && geocodedLabel
+                      ? `Found: ${geocodedLabel}`
+                      : geocodeStatus === "failed"
+                        ? "Address not found — try a nearby landmark, intersection, or use GPS below."
+                        : typeof latitudeValue === "number" && typeof longitudeValue === "number"
+                          ? `Coordinates set: ${latitudeValue.toFixed(4)}, ${longitudeValue.toFixed(4)}`
+                          : "Tab out of the address field above to auto-locate, or use your GPS."}
                 </p>
               </div>
             </div>
