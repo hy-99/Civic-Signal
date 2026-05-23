@@ -146,8 +146,10 @@ function RasterTileMap({
   const [size, setSize] = useState({ width: 720, height: 520 });
   const [zoom, setZoom] = useState(12);
   const [displayMode, setDisplayMode] = useState<MapDisplayMode>("realistic");
-  const centerLng = clusters.length ? clusters.reduce((total, cluster) => total + cluster.longitude, 0) / clusters.length : DEFAULT_COORDS.lng;
-  const centerLat = clusters.length ? clusters.reduce((total, cluster) => total + cluster.latitude, 0) / clusters.length : DEFAULT_COORDS.lat;
+  const [isLocating, setIsLocating] = useState(false);
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const centerLng = userLocation?.lng ?? (clusters.length ? clusters.reduce((total, cluster) => total + cluster.longitude, 0) / clusters.length : DEFAULT_COORDS.lng);
+  const centerLat = userLocation?.lat ?? (clusters.length ? clusters.reduce((total, cluster) => total + cluster.latitude, 0) / clusters.length : DEFAULT_COORDS.lat);
   const center = useMemo(() => worldPoint(centerLng, centerLat, zoom), [centerLat, centerLng, zoom]);
 
   useEffect(() => {
@@ -161,6 +163,28 @@ function RasterTileMap({
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  const handleGeolocation = () => {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by your browser.");
+      return;
+    }
+
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserLocation({ lat: latitude, lng: longitude });
+        setZoom(15);
+        setIsLocating(false);
+      },
+      () => {
+        alert("Unable to retrieve your location. Please check your permissions.");
+        setIsLocating(false);
+      },
+      { timeout: 5000 },
+    );
+  };
 
   const tiles = useMemo(() => {
     const startX = Math.floor((center.x - size.width / 2) / 256);
@@ -229,6 +253,16 @@ function RasterTileMap({
       })}
 
       <div className="absolute right-3 top-3 grid overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <button 
+          type="button" 
+          disabled={isLocating}
+          className="h-9 w-9 text-sm font-black border-b border-slate-200 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          onClick={handleGeolocation}
+          aria-label="Zoom to your location"
+          title="Show my location"
+        >
+          {isLocating ? "..." : "📍"}
+        </button>
         <button type="button" className="h-9 w-9 border-b border-slate-200 text-sm font-black hover:bg-slate-50" onClick={() => setZoom((value) => Math.min(16, value + 1))}>
           +
         </button>
@@ -326,6 +360,7 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
         });
 
         map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
+        map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: false }, trackUserLocation: false, showUserHeading: false }), "top-right");
         map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
         map.on("load", () => {
           const initialClusters = initialClustersRef.current;

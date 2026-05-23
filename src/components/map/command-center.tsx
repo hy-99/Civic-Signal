@@ -81,7 +81,7 @@ function HazardListItem({
       className={cn(
         "cursor-pointer rounded-xl border border-l-4 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
         riskAccent,
-        selected ? "border-blue-300 bg-blue-50/50 ring-2 ring-blue-100" : "border-slate-200",
+        selected ? "border-blue-400 bg-blue-50 ring-2 ring-blue-300 shadow-md" : "border-slate-200",
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -329,6 +329,11 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
     });
   };
 
+  const handleMapSelect = (id: string) => {
+    // Toggle behavior: clicking the same item again deselects it
+    setSelectedId(selectedId === id ? null : id);
+  };
+
   return (
     <div className={cn("civic-map-entrance relative h-full min-h-0 overflow-y-auto bg-[#eef3f8] lg:overflow-hidden", submitMode && "pointer-events-none select-none")}>
       <div className={cn("min-h-full p-2 lg:h-full lg:min-h-0 lg:p-3", submitMode && "scale-[0.985] blur-[3px] brightness-75")}>
@@ -406,7 +411,9 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
                       audience={audience}
                       selected={report.cluster_id === selected?.id}
                       onSelect={() => {
-                        if (report.cluster_id) setSelectedId(report.cluster_id);
+                        if (report.cluster_id) {
+                          handleMapSelect(report.cluster_id);
+                        }
                       }}
                       onAction={handleReportAction}
                     />
@@ -449,7 +456,7 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
                 selectedId={selected?.id ?? null}
                 audience={audience}
                 focusLocation={focusLocation}
-                onSelect={(id) => setSelectedId(id)}
+                onSelect={handleMapSelect}
               />
               <MapLegendStrip />
               <div className="pointer-events-none absolute bottom-3 right-3 z-10 hidden items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[10px] font-bold text-slate-500 shadow-sm ring-1 ring-slate-200 md:inline-flex">
@@ -457,6 +464,44 @@ export function CommandCenter({ clusters, reports, submitMode = false, children 
                 AI-evaluated
               </div>
             </div>
+
+            {selected && (
+              <div className="border-t border-slate-200 bg-gradient-to-b from-white to-slate-50 p-4 cs-detail-panel">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <h2 className="text-base font-black tracking-[-0.02em] text-slate-950">{selected.title}</h2>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(null)}
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                    aria-label="Close detail panel"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="text-sm text-slate-600 mb-3">{selected.summary || `Location: ${selected.latitude.toFixed(2)}, ${selected.longitude.toFixed(2)}`}</p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  <RiskBadge risk_level={selected.risk_level} />
+                  <StatusBadge status={selected.status} />
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-3 text-sm">
+                  <div className="rounded-lg bg-blue-50 p-2 text-center">
+                    <p className="font-bold text-blue-700">{selected.risk_score}</p>
+                    <p className="text-xs text-blue-600">Risk</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-100 p-2 text-center">
+                    <p className="font-bold text-slate-700">{selected.confidence_score}</p>
+                    <p className="text-xs text-slate-600">Confidence</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-100 p-2 text-center">
+                    <p className="font-bold text-slate-700">{selected.report_count + selected.signal_count}</p>
+                    <p className="text-xs text-slate-600">Evidence</p>
+                  </div>
+                </div>
+                <Link href={`/app/risks/${selected.id}`} className="inline-block text-sm font-semibold text-blue-600 hover:text-blue-700">
+                  View full details →
+                </Link>
+              </div>
+            )}
           </section>
         </div>
       </div>
