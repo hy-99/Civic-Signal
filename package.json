@@ -1,0 +1,39 @@
+{
+  "name": "civicsignal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:stop": "node scripts/stop-dev.mjs",
+    "dev:next": "next dev --port 3000",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "node --import tsx --test src/tests/**/*.test.ts",
+    "check:brand": "if rg -n \"UrbanPulse|CivicSignal AI|GuardianGrid\" src README.md .env.example src/db; then exit 1; else exit 0; fi"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@supabase/supabase-js": "^2.104.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.11.0",
+    "maplibre-gl": "^5.24.0",
+    "next": "16.2.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-hook-form": "^7.74.0",
+    "tailwind-merge": "^3.5.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.4",
+    "tailwindcss": "^4",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}
