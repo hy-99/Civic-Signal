@@ -111,12 +111,15 @@ export async function createReport(
 ) {
   let latitude = input.latitude ?? null;
   let longitude = input.longitude ?? null;
-  if ((latitude === null || longitude === null) && input.address_text) {
-    const geocoded = await geocodeAddress(input.address_text);
+  const addressText = input.address_text?.trim() || null;
+  if ((latitude === null || longitude === null) && addressText) {
+    const geocoded = await geocodeAddress(addressText);
     latitude = geocoded.latitude;
     longitude = geocoded.longitude;
   }
-  if (latitude === null || longitude === null) throw new Error("Location is required.");
+  if (latitude === null || longitude === null || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new Error("A valid location is required. Enter an address or use your current location.");
+  }
 
   const aiPreview = await analyzeReportText({
     title: input.title,

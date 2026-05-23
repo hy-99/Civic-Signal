@@ -165,13 +165,16 @@ export function ReportForm() {
             </Field>
           </div>
 
-          <Field label="Location" labelClassName={labelClassName} helpClassName={helpClassName}>
-            <Input
-              className={fieldClassName}
-              placeholder="Search by intersection, corridor, or place name"
-              {...form.register("address_text")}
-            />
-          </Field>
+          <div className="grid gap-1.5">
+            <Field label="Location" labelClassName={labelClassName} helpClassName={helpClassName}>
+              <Input
+                className={fieldClassName}
+                placeholder="Search by intersection, corridor, or place name"
+                {...form.register("address_text")}
+              />
+            </Field>
+            <FieldError message={errors.address_text?.message} />
+          </div>
 
           <div className="grid gap-3 rounded-xl border border-emerald-100 bg-emerald-50/80 p-3 md:grid-cols-[1fr_auto] md:items-center">
             <div className="flex items-start gap-3">
@@ -238,24 +241,30 @@ export function ReportForm() {
           <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
             <summary className="cursor-pointer text-sm font-semibold text-slate-700">Manual coordinates</summary>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <Field label="Latitude" labelClassName={labelClassName} helpClassName={helpClassName}>
-                <Input
-                  className={fieldClassName}
-                  type="number"
-                  step="any"
-                  value={latitudeValue ?? ""}
-                  onChange={(event) => form.setValue("latitude", event.target.value ? Number(event.target.value) : null, { shouldDirty: true, shouldValidate: true })}
-                />
-              </Field>
-              <Field label="Longitude" labelClassName={labelClassName} helpClassName={helpClassName}>
-                <Input
-                  className={fieldClassName}
-                  type="number"
-                  step="any"
-                  value={longitudeValue ?? ""}
-                  onChange={(event) => form.setValue("longitude", event.target.value ? Number(event.target.value) : null, { shouldDirty: true, shouldValidate: true })}
-                />
-              </Field>
+              <div className="grid gap-1.5">
+                <Field label="Latitude" labelClassName={labelClassName} helpClassName={helpClassName}>
+                  <Input
+                    className={fieldClassName}
+                    type="number"
+                    step="any"
+                    value={latitudeValue ?? ""}
+                    onChange={(event) => form.setValue("latitude", event.target.value ? Number(event.target.value) : null, { shouldDirty: true, shouldValidate: true })}
+                  />
+                </Field>
+                <FieldError message={errors.latitude?.message} />
+              </div>
+              <div className="grid gap-1.5">
+                <Field label="Longitude" labelClassName={labelClassName} helpClassName={helpClassName}>
+                  <Input
+                    className={fieldClassName}
+                    type="number"
+                    step="any"
+                    value={longitudeValue ?? ""}
+                    onChange={(event) => form.setValue("longitude", event.target.value ? Number(event.target.value) : null, { shouldDirty: true, shouldValidate: true })}
+                  />
+                </Field>
+                <FieldError message={errors.longitude?.message} />
+              </div>
             </div>
           </details>
 

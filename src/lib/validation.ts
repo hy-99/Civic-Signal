@@ -16,20 +16,36 @@ export const signupSchema = z.object({
   agreed_to_safety: z.literal(true),
 });
 
-export const reportCreateSchema = z.object({
-  title: z.string().min(4).max(120),
-  description: z.string().min(12).max(2000),
-  category: z.enum(CATEGORY_OPTIONS.map((item) => item.value) as [string, ...string[]]),
-  urgency: z.enum(URGENCY_OPTIONS.map((item) => item.value) as [string, ...string[]]),
-  address_text: z.string().max(160).optional().nullable(),
-  latitude: z.number().min(-90).max(90).optional().nullable(),
-  longitude: z.number().min(-180).max(180).optional().nullable(),
-  image_url: z.string().optional().nullable(),
-  image_storage_path: z.string().optional().nullable(),
-  is_anonymous: z.boolean().default(false),
-  agreed_to_accuracy: z.literal(true),
-  image_analysis: z.object({}).passthrough().optional().nullable(),
-});
+export const reportCreateSchema = z
+  .object({
+    title: z.string().min(4).max(120),
+    description: z.string().min(12).max(2000),
+    category: z.enum(CATEGORY_OPTIONS.map((item) => item.value) as [string, ...string[]]),
+    urgency: z.enum(URGENCY_OPTIONS.map((item) => item.value) as [string, ...string[]]),
+    address_text: z.string().max(160).optional().nullable(),
+    latitude: z.number().min(-90).max(90).optional().nullable(),
+    longitude: z.number().min(-180).max(180).optional().nullable(),
+    image_url: z.string().optional().nullable(),
+    image_storage_path: z.string().optional().nullable(),
+    is_anonymous: z.boolean().default(false),
+    agreed_to_accuracy: z.literal(true),
+    image_analysis: z.object({}).passthrough().optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    const hasLat = typeof data.latitude === "number";
+    const hasLng = typeof data.longitude === "number";
+    const hasAddress = typeof data.address_text === "string" && data.address_text.trim().length > 0;
+
+    if (hasLat && !hasLng) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Longitude is required when latitude is set.", path: ["longitude"] });
+    }
+    if (hasLng && !hasLat) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Latitude is required when longitude is set.", path: ["latitude"] });
+    }
+    if (!hasAddress && !(hasLat && hasLng)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Enter an address or use your current location.", path: ["address_text"] });
+    }
+  });
 
 export const reportPatchSchema = z.object({
   status: z.enum(REPORT_STATUSES).optional(),

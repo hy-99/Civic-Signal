@@ -43,25 +43,39 @@ async function geocodeWithNominatim(query: string) {
   url.searchParams.set("format", "jsonv2");
   url.searchParams.set("limit", "1");
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      "User-Agent": "CivicSignal/1.0 (+https://github.com/hy-99/Civic-Signal)",
-      Accept: "application/json",
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
 
-  if (!response.ok) return null;
-  const results = (await response.json()) as Array<{ lat: string; lon: string; display_name: string }>;
-  const hit = results[0];
-  if (!hit) return null;
+  try {
+    const response = await fetch(url.toString(), {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "CivicSignal/1.0 (+https://github.com/hy-99/Civic-Signal)",
+        Accept: "application/json",
+      },
+    });
 
-  return {
-    latitude: Number(hit.lat),
-    longitude: Number(hit.lon),
-    formatted_address: hit.display_name,
-    provider: "nominatim",
-    raw_json: hit,
-  };
+    if (!response.ok) return null;
+    const results = (await response.json()) as Array<{ lat: string; lon: string; display_name: string }>;
+    const hit = results[0];
+    if (!hit) return null;
+
+    const latitude = Number(hit.lat);
+    const longitude = Number(hit.lon);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+    return {
+      latitude,
+      longitude,
+      formatted_address: hit.display_name,
+      provider: "nominatim",
+      raw_json: hit,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function geocodeAddress(query: string) {
