@@ -95,6 +95,10 @@ function govToastDotClass(tone: GovActionToast["tone"]) {
   return "bg-rose-500 shadow-[0_0_18px_rgba(244,63,94,0.42)]";
 }
 
+function pluralize(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
 const AUDIENCE_COPY = {
   citizen: {
     sidebarEyebrow: "Citizen view",
@@ -133,19 +137,27 @@ function HazardListItem({
   onSelect: () => void;
   onAction: (reportId: string, action: ReportAction) => void;
 }) {
+  const clusterRiskLevel = report.cluster?.risk_level ?? report.risk_level;
+  const displayRiskLevel = audience === "responder" ? clusterRiskLevel : report.risk_level;
+  const displayStatus = audience === "responder" ? report.cluster?.status ?? report.status : report.status;
+  const displayRiskScore = audience === "responder" ? report.cluster?.risk_score ?? report.risk_score : report.risk_score;
+  const displayConfidenceScore = audience === "responder" ? report.cluster?.confidence_score ?? report.confidence_score : report.confidence_score;
+  const evidenceLabel = report.cluster
+    ? `${pluralize(report.cluster.report_count, "report")} · ${pluralize(report.cluster.signal_count, "signal")}`
+    : "Single report";
+  const detailsHref = audience === "responder" && report.cluster_id ? `/app/risks/${report.cluster_id}` : `/app/reports/${report.id}`;
   const riskAccent =
-    report.risk_level === "urgent"
+    displayRiskLevel === "urgent"
       ? "border-l-rose-500"
-      : report.risk_level === "serious"
+      : displayRiskLevel === "serious"
         ? "border-l-orange-500"
-        : report.risk_level === "watch"
+        : displayRiskLevel === "watch"
           ? "border-l-yellow-400"
           : "border-l-slate-300";
 
   // Government status is cluster-level, so the card halo mirrors the same
   // cluster risk color used by the map pin instead of the individual report.
   const clusterStatus = report.cluster?.status;
-  const clusterRiskLevel = report.cluster?.risk_level ?? report.risk_level;
   let govGlow: string | null = null;
   if (clusterStatus === "in_progress") {
     govGlow = "shadow-[0_0_0_1.75px_rgba(37,99,235,0.42),0_0_28px_5px_rgba(37,99,235,0.2)]";
@@ -190,9 +202,9 @@ function HazardListItem({
         {audience === "responder" ? (
           <div className="grid gap-1 justify-items-end">
             <div className="grid place-items-center rounded-lg bg-slate-900 px-2 py-1 text-xs font-black text-white">
-              {report.risk_score}
+              {displayRiskScore}
             </div>
-            <StatusBadge status={report.status} />
+            <StatusBadge status={displayStatus} />
           </div>
         ) : (
           <div className="grid gap-1 justify-items-end">
@@ -207,8 +219,9 @@ function HazardListItem({
         <span>{formatRelativeTime(report.updated_at)}</span>
         {audience === "responder" ? (
           <>
-            <span>Conf {report.confidence_score}</span>
+            <span>Conf {displayConfidenceScore}</span>
             <span>{report.vote_summary.confirm} ✓ {report.vote_summary.dispute} ✗</span>
+            <span>{evidenceLabel}</span>
           </>
         ) : (
           <span>{report.vote_summary.confirm} verified</span>
@@ -274,7 +287,7 @@ function HazardListItem({
           </>
         )}
         <Link
-          href={`/app/reports/${report.id}`}
+          href={detailsHref}
           className="ml-auto text-[11px] font-black text-blue-700"
           onClick={(event) => event.stopPropagation()}
         >
@@ -398,17 +411,28 @@ export function CommandCenter({ clusters, reports, viewer, clusterStats, submitM
       .sort((a, b) => b.risk_score - a.risk_score || b.confidence_score - a.confidence_score);
   }, [category, query, reports, risk]);
 
-  // Rank the top 3 most urgent active/needs-review/verified reports by risk_score
-  // so responders see what to address first.
+  const sidebarReports = useMemo(() => {
+    if (audience === "citizen") return filteredReports;
+    const seenClusterIds = new Set<string>();
+    return filteredReports.filter((report) => {
+      const key = report.cluster_id || `report:${report.id}`;
+      if (seenClusterIds.has(key)) return false;
+      seenClusterIds.add(key);
+      return true;
+    });
+  }, [audience, filteredReports]);
+
+  // Rank the top 3 most urgent visible hazards by risk_score so responders
+  // see one priority row per cluster, not one row per duplicate report.
   const priorityRanks = useMemo(() => {
     const ranks = new Map<string, number>();
     const open = ["active", "needs_review", "verified"] as const;
-    const candidates = filteredReports
+    const candidates = sidebarReports
       .filter((report) => (open as readonly string[]).includes(report.status))
       .slice(0, 3);
     candidates.forEach((report, index) => ranks.set(report.id, index + 1));
     return ranks;
-  }, [filteredReports]);
+  }, [sidebarReports]);
 
   const activeCount = clusterStats?.active ?? clusters.length;
   const urgentCount = clusterStats?.urgent ?? clusters.filter((cluster) => cluster.risk_level === "urgent" || cluster.risk_level === "serious").length;
@@ -568,11 +592,11 @@ export function CommandCenter({ clusters, reports, viewer, clusterStats, submitM
             </div>
 
             <div className="civic-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-x-none p-2">
-              {filteredReports.length ? (
+              {sidebarReports.length ? (
                 <div className="grid gap-2">
-                  {filteredReports.map((report) => (
+                  {sidebarReports.map((report) => (
                     <HazardListItem
-                      key={report.id}
+                      key={audience === "responder" ? report.cluster_id || report.id : report.id}
                       report={report}
                       audience={audience}
                       priorityRank={priorityRanks.get(report.id)}
