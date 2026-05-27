@@ -1,8 +1,12 @@
 import { CATEGORY_CONFIG, DEMO_PERSONAS, DEFAULT_COORDS } from "@/lib/constants";
 import type {
   AnalysisJson,
+  CaseEvent,
   CivicState,
   ConfidenceLabel,
+  DangerZone,
+  HazardType,
+  IncidentCase,
   PublicSignal,
   Report,
   ReportCategoryKey,
@@ -423,6 +427,216 @@ function analysis(input: {
   };
 }
 
+function categoryToHazardType(category: ReportCategoryKey): HazardType {
+  if (category === "fire_smoke") return "fire_smoke";
+  if (category === "flooding") return "flooding";
+  if (category === "weather_damage" || category === "fallen_tree") return "storm_weather";
+  if (category === "pothole" || category === "traffic_obstruction" || category === "road_hazard") return "road_blockage";
+  if (category === "building_structure_concern" || category === "broken_streetlight" || category === "power_outage") return "infrastructure_damage";
+  if (category === "public_disturbance") return "public_disturbance";
+  if (category === "crowd_safety" || category === "public_event_crowding") return "crowd_risk";
+  if (category === "school_area_concern") return "school_area_concern";
+  if (category === "unauthorized_vending") return "unauthorized_vending";
+  if (category === "trash_sanitation") return "sanitation";
+  return "other";
+}
+
+function polygonAround(lat: number, lng: number, radius = 0.0022, skew = 0.0009) {
+  return {
+    type: "Polygon" as const,
+    coordinates: [
+      [
+        [lng - radius, lat - radius * 0.55],
+        [lng - skew, lat + radius],
+        [lng + radius * 1.15, lat + radius * 0.35],
+        [lng + radius * 0.8, lat - radius * 0.95],
+        [lng - radius, lat - radius * 0.55],
+      ],
+    ],
+  };
+}
+
+function lineNear(lat: number, lng: number, length = 0.005) {
+  return {
+    type: "LineString" as const,
+    coordinates: [
+      [lng - length * 0.5, lat - length * 0.18],
+      [lng, lat],
+      [lng + length * 0.55, lat + length * 0.22],
+    ],
+  };
+}
+
+function createSeedCaseOps(
+  risk_clusters: RiskCluster[],
+  reports: Report[],
+  public_signals: PublicSignal[],
+) {
+  const incident_cases: IncidentCase[] = [];
+  const danger_zones: DangerZone[] = [];
+  const case_events: CaseEvent[] = [];
+  const candidates = risk_clusters
+    .filter((cluster) => cluster.risk_score >= 45 || cluster.category === "fire_smoke" || cluster.category === "flooding")
+    .slice(0, 6);
+
+  candidates.forEach((cluster, index) => {
+    const linkedReports = reports.filter((report) => report.cluster_id === cluster.id).map((report) => report.id);
+    const linkedSignals = public_signals.filter((signal) => signal.cluster_id === cluster.id).map((signal) => signal.id);
+    const caseId = makeId(1000, index + 1);
+    const zone = polygonAround(cluster.latitude, cluster.longitude, cluster.risk_level === "urgent" ? 0.003 : 0.002);
+    const predictedZone = polygonAround(cluster.latitude + 0.0012, cluster.longitude + 0.0014, 0.0027, 0.0006);
+    const status: IncidentCase["status"] =
+      cluster.category === "fire_smoke"
+        ? "public_alert_active"
+        : cluster.status === "verified"
+          ? "field_verification"
+          : cluster.status === "in_progress"
+            ? "active_response"
+            : "triage";
+
+    incident_cases.push({
+      id: caseId,
+      title: cluster.title,
+      original_title: linkedReports.length ? reports.find((report) => report.id === linkedReports[0])?.title ?? null : null,
+      ai_suggested_title: `Possible ${CATEGORY_CONFIG[cluster.category].label.toLowerCase()} near ${cluster.latitude.toFixed(3)}, ${cluster.longitude.toFixed(3)}`,
+      linked_report_ids: linkedReports,
+      linked_cluster_id: cluster.id,
+      hazard_type: categoryToHazardType(cluster.category),
+      severity: cluster.risk_score,
+      confidence: cluster.confidence_score,
+      urgency: cluster.risk_score,
+      privacy_risk: cluster.category === "public_disturbance" || cluster.category === "school_area_concern" ? 64 : 22,
+      evidence_match: Math.min(96, 45 + linkedReports.length * 15 + linkedSignals.length * 18 + cluster.photo_count * 10),
+      duplicate_likelihood: linkedReports.length > 1 ? 56 : 18,
+      status,
+      owner_role: cluster.category === "fire_smoke" || cluster.category === "flooding" ? "government" : "responder",
+      owner_department:
+        cluster.category === "fire_smoke"
+          ? "fire_ems"
+          : cluster.category === "flooding" || cluster.category === "road_hazard" || cluster.category === "pothole"
+            ? "public_works"
+            : cluster.category === "trash_sanitation"
+              ? "sanitation"
+              : "police",
+      active_zone: zone,
+      predicted_zones: cluster.category === "fire_smoke" || cluster.category === "flooding" ? [predictedZone] : [],
+      public_summary: cluster.summary || `Public report cluster for ${CATEGORY_CONFIG[cluster.category].label.toLowerCase()}.`,
+      responder_summary: cluster.action_plan || "Review evidence, verify from a safe distance, and update status.",
+      ai_reasoning_summary: cluster.analysis_json.score_breakdown.risk_reason,
+      public_alert_status: cluster.category === "fire_smoke" ? "active" : "none",
+      uipath_case_id: `mock-uipath-${String(index + 1).padStart(3, "0")}`,
+      created_at: cluster.created_at,
+      updated_at: cluster.updated_at,
+    });
+
+    cluster.linked_case_id = caseId;
+    cluster.hazard_type = categoryToHazardType(cluster.category);
+    cluster.zone_geometry = zone;
+    reports.forEach((report) => {
+      if (linkedReports.includes(report.id)) report.linked_case_id = caseId;
+    });
+    public_signals.forEach((signal) => {
+      if (linkedSignals.includes(signal.id)) signal.linked_case_id = caseId;
+    });
+
+    danger_zones.push({
+      id: makeId(1100, index + 1),
+      case_id: caseId,
+      report_id: null,
+      cluster_id: cluster.id,
+      type: "official_active_zone",
+      geometry: zone,
+      label: `${CATEGORY_CONFIG[cluster.category].label} active zone`,
+      severity: cluster.risk_score,
+      confidence: cluster.confidence_score,
+      starts_at: cluster.created_at,
+      expires_at: null,
+      estimated_arrival_at: null,
+      instructions: "Avoid the immediate area until the case is updated by a moderator or responder.",
+      created_by_role: "government",
+      created_at: cluster.created_at,
+      updated_at: cluster.updated_at,
+    });
+
+    if (cluster.category === "fire_smoke" || cluster.category === "flooding") {
+      danger_zones.push({
+        id: makeId(1200, index + 1),
+        case_id: caseId,
+        report_id: null,
+        cluster_id: cluster.id,
+        type: "official_predicted_zone",
+        geometry: predictedZone,
+        label: `${CATEGORY_CONFIG[cluster.category].label} predicted spread`,
+        severity: Math.max(35, cluster.risk_score - 12),
+        confidence: Math.max(30, cluster.confidence_score - 16),
+        starts_at: null,
+        expires_at: null,
+        estimated_arrival_at: ago(-1),
+        instructions: "Monitor official updates. This is a predicted planning zone, not confirmed impact.",
+        created_by_role: "government",
+        created_at: cluster.created_at,
+        updated_at: cluster.updated_at,
+      });
+    }
+
+    if (index < 3) {
+      danger_zones.push({
+        id: makeId(1300, index + 1),
+        case_id: caseId,
+        report_id: null,
+        cluster_id: cluster.id,
+        type: "evacuation_route",
+        geometry: lineNear(cluster.latitude - 0.002, cluster.longitude + 0.001),
+        label: "Suggested safe route",
+        severity: 10,
+        confidence: 58,
+        starts_at: null,
+        expires_at: null,
+        estimated_arrival_at: null,
+        instructions: "Use this as a demo route for safe movement away from the hazard zone.",
+        created_by_role: "government",
+        created_at: cluster.created_at,
+        updated_at: cluster.updated_at,
+      });
+    }
+
+    case_events.push(
+      {
+        id: makeId(1400, index * 4 + 1),
+        case_id: caseId,
+        actor_type: "citizen",
+        actor_label: "Community report",
+        action: "report_submitted",
+        summary: `${linkedReports.length || 1} citizen report${linkedReports.length === 1 ? "" : "s"} linked to this place-based hazard.`,
+        metadata: { linked_report_ids: linkedReports },
+        created_at: cluster.created_at,
+      },
+      {
+        id: makeId(1400, index * 4 + 2),
+        case_id: caseId,
+        actor_type: "ai",
+        actor_label: "Gemini triage fallback-ready",
+        action: "ai_triage_completed",
+        summary: `Severity ${cluster.risk_score}, confidence ${cluster.confidence_score}, category ${cluster.category}.`,
+        metadata: { risk_level: cluster.risk_level, signal_ids: linkedSignals },
+        created_at: ago(Math.max(0.5, index + 1)),
+      },
+      {
+        id: makeId(1400, index * 4 + 3),
+        case_id: caseId,
+        actor_type: status === "triage" ? "moderator" : "government",
+        actor_label: status === "triage" ? "Dispatcher review" : "Operations desk",
+        action: status === "triage" ? "moderator_reviewed" : "public_alert_approved",
+        summary: status === "triage" ? "Case is queued for human review." : "Public-safe case status is visible on the map.",
+        metadata: { status },
+        created_at: cluster.updated_at,
+      },
+    );
+  });
+
+  return { incident_cases, danger_zones, case_events };
+}
+
 function createProfiles() {
   return [
     {
@@ -833,12 +1047,16 @@ export function createInitialState(): CivicState {
     is_active: true,
     created_at: ago(700),
   }));
+  const caseOps = createSeedCaseOps(risk_clusters, reports, public_signals);
 
   return {
     profiles: profiles as CivicState["profiles"],
     reports,
     public_signals,
     risk_clusters,
+    incident_cases: caseOps.incident_cases,
+    danger_zones: caseOps.danger_zones,
+    case_events: caseOps.case_events,
     cluster_items,
     report_votes,
     cluster_votes,

@@ -10,9 +10,14 @@ import type {
   ReportVoteType,
 } from "@/lib/types";
 import { analyzeReportText, checkClaimImageConsistency } from "@/services/ai";
+import { triageReportForCaseOps } from "@/services/case-triage";
 import { CATEGORY_CONFIG } from "@/lib/constants";
+import { bus } from "@/lib/events/bus";
+import { buildReportLifecycleEvents } from "@/lib/events/domain";
+import { buildReportEmbeddingText, getTextEmbedding } from "@/services/embeddings";
 import { isRealImageAnalysis } from "@/services/scoring";
 import { isPublicCluster, linkReportToClusterInState, recalculateClusterInState } from "@/services/clusters";
+import { createIncidentCaseFromReportInState } from "@/services/cases";
 import { geocodeAddress } from "@/services/geocoding";
 import { checkReportForModeration } from "@/services/moderation";
 import { assessImageClaimConsistency, scoreReport } from "@/services/scoring";
@@ -160,6 +165,7 @@ export async function createReport(
   > & {
     latitude?: number | null;
     longitude?: number | null;
+    user_submitted_zone?: Report["user_submitted_zone"];
     image_analysis?: Record<string, unknown> | null;
   },
   viewer?: AuthViewer | null,
@@ -215,34 +221,60 @@ export async function createReport(
     category: input.category,
     address_text: input.address_text || null,
   });
+  const triage = await triageReportForCaseOps({
+    title: input.title,
+    description: input.description,
+    category: input.category,
+    urgency: input.urgency,
+    address_text: input.address_text || null,
+    image_analysis,
+  });
+  const embedding = await getTextEmbedding(
+    buildReportEmbeddingText({
+      title: input.title,
+      description: input.description,
+      category: input.category,
+    }),
+  );
   return withMutableState(async (state) => {
     const draft: Report = {
       id: createId(),
       user_id: viewer?.id || null,
-      title: input.title,
+      title: triage.suggestedTitle || input.title,
+      original_title: input.title,
+      ai_suggested_title: triage.suggestedTitle,
       description: input.description,
       category: input.category,
+      hazard_type: triage.hazardType,
       urgency: input.urgency,
-      status: "active",
+      status: "ai_triaged",
+      moderation_status: triage.requiredHumanReview ? "held_for_review" : "public",
       latitude,
       longitude,
       address_text: input.address_text || null,
       image_url: input.image_url || null,
       image_storage_path: input.image_storage_path || null,
+      user_submitted_zone: input.user_submitted_zone || null,
+      ai_suggested_zone: input.user_submitted_zone || null,
+      severity_score: triage.severity,
+      urgency_score: triage.urgency,
+      privacy_risk_score: triage.privacyRisk,
+      evidence_match_score: triage.evidenceMatch,
       risk_score: 0,
       confidence_score: 0,
-      analysis_summary: null,
+      embedding,
+      analysis_summary: triage.publicSummary,
       analysis_json: {
         score_breakdown: {
-          risk_score: 0,
-          confidence_score: 0,
-          risk_level: "low",
-          confidence_label: "very_low",
+          risk_score: triage.severity,
+          confidence_score: triage.confidence,
+          risk_level: triage.severity >= 75 ? "urgent" : triage.severity >= 50 ? "serious" : triage.severity >= 25 ? "watch" : "low",
+          confidence_label: triage.confidence >= 85 ? "very_high" : triage.confidence >= 70 ? "high" : triage.confidence >= 50 ? "medium" : triage.confidence >= 25 ? "low" : "very_low",
           risk_factors: [],
           confidence_factors: [],
-          risk_reason: "",
-          confidence_reason: "",
-          recommended_action: "",
+          risk_reason: triage.reasoningSummary,
+          confidence_reason: `Evidence match ${triage.evidenceMatch}/100, duplicate likelihood ${triage.duplicateLikelihood}/100.`,
+          recommended_action: triage.requiredHumanReview ? "Hold for moderator review before public escalation." : "Link to cluster and monitor for confirmations.",
         },
         moderation_flags: [],
         image_analysis: (input.image_analysis as AnalysisJson["image_analysis"]) || null,
@@ -256,7 +288,8 @@ export async function createReport(
     };
 
     const moderation = checkReportForModeration(draft);
-    draft.status = moderation.needs_review ? "needs_review" : "active";
+    draft.status = moderation.needs_review || triage.requiredHumanReview ? "needs_review" : "active";
+    draft.moderation_status = moderation.needs_review || triage.requiredHumanReview ? "held_for_review" : "public";
     draft.moderation_flag = moderation.moderation_flag;
     draft.analysis_json.moderation_flags = moderation.moderation_flags;
     draft.analysis_json.extracted_location_text = typeof aiPreview.extractedLocationText === "string" ? aiPreview.extractedLocationText : null;
@@ -273,9 +306,13 @@ export async function createReport(
       created_at: draft.created_at,
     });
 
-    await linkReportToClusterInState(state, draft);
+    const clusterLink = await linkReportToClusterInState(state, draft);
     await recalculateReportScoreInState(state, draft.id);
     if (draft.cluster_id) await recalculateClusterInState(state, draft.cluster_id);
+
+    if (triage.severity >= 65 || triage.requiredHumanReview) {
+      createIncidentCaseFromReportInState(state, draft, triage);
+    }
 
     state.report_updates.push({
       id: createId(),
@@ -287,6 +324,10 @@ export async function createReport(
       metadata: {},
       created_at: nowIso(),
     });
+
+    for (const event of buildReportLifecycleEvents(draft, clusterLink.match?.reason)) {
+      bus.emit(event);
+    }
 
     return buildReportView(state, draft);
   });

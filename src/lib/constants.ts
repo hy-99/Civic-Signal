@@ -1,6 +1,11 @@
 import type {
   ClusterVoteType,
+  CaseOpsRoleMode,
+  CaseOwnerRole,
   ConfidenceLabel,
+  DangerZoneType,
+  HazardType,
+  IncidentCaseStatus,
   ReportCategoryKey,
   ReportStatus,
   ReportVoteType,
@@ -31,27 +36,93 @@ export const DEFAULT_COORDS = {
 
 export const RISK_LEVELS: RiskLevel[] = ["low", "watch", "serious", "urgent"];
 export const REPORT_STATUSES: ReportStatus[] = [
+  "submitted",
+  "ai_triaged",
+  "held_for_review",
+  "public",
   "active",
   "needs_review",
   "verified",
+  "in_progress",
   "resolved",
   "hidden",
+  "rejected",
   "false_alarm",
   "duplicate",
+  "attached_to_case",
 ];
 export const CLUSTER_STATUSES: RiskClusterStatus[] = [
   "active",
   "monitoring",
+  "needs_review",
   "in_progress",
   "verified",
   "urgent",
   "resolved",
   "hidden",
   "false_alarm",
+  "merged",
+];
+export const CASEOPS_ROLE_MODES: CaseOpsRoleMode[] = ["citizen", "police", "government"];
+export const CASE_OWNER_ROLES: CaseOwnerRole[] = [
+  "moderator",
+  "government",
+  "responder",
+  "police",
+  "fire_ems",
+  "public_works",
+  "sanitation",
+  "campus_safety",
+  "system",
+];
+export const INCIDENT_CASE_STATUSES: IncidentCaseStatus[] = [
+  "intake",
+  "triage",
+  "ai_triaged",
+  "human_review",
+  "assigned",
+  "field_verification",
+  "active_response",
+  "public_alert_pending",
+  "public_alert_active",
+  "monitoring",
+  "resolved",
+  "rejected",
+  "false_alarm",
+  "duplicate",
+  "escalated",
+];
+export const DANGER_ZONE_TYPES: DangerZoneType[] = [
+  "user_suspected_zone",
+  "ai_suggested_zone",
+  "official_active_zone",
+  "official_predicted_zone",
+  "safe_zone",
+  "evacuation_route",
+  "road_closure",
+  "shelter_area",
+];
+export const HAZARD_TYPES: HazardType[] = [
+  "fire_smoke",
+  "flooding",
+  "storm_weather",
+  "tsunami",
+  "earthquake_damage",
+  "road_blockage",
+  "infrastructure_damage",
+  "medical_emergency",
+  "violence_threat",
+  "public_disturbance",
+  "crowd_risk",
+  "school_area_concern",
+  "unauthorized_vending",
+  "hazardous_material",
+  "sanitation",
+  "other",
 ];
 export const REPORT_VOTE_TYPES: ReportVoteType[] = ["confirm", "dispute", "resolved", "duplicate"];
 export const CLUSTER_VOTE_TYPES: ClusterVoteType[] = ["confirm", "dispute", "resolved", "monitor"];
-export const SOURCE_TYPES: SourceType[] = ["rss", "city_alert", "weather", "traffic", "news_api", "manual", "other"];
+export const SOURCE_TYPES: SourceType[] = ["rss", "city_alert", "weather", "traffic", "news_api", "manual", "usgs", "nws", "open_meteo", "other"];
 export const USER_ROLES: UserRole[] = ["user", "moderator", "admin"];
 
 export const NAV_ITEMS = [
@@ -132,6 +203,17 @@ export const CONFIDENCE_LABELS: { min: number; label: ConfidenceLabel }[] = [
   { min: 25, label: "low" },
   { min: 0, label: "very_low" },
 ];
+
+export const SEMANTIC_CLUSTER_MATCH = {
+  weights: {
+    spatial: 0.4,
+    temporal: 0.2,
+    semantic: 0.4,
+  },
+  match_threshold: 0.55,
+  semantic_reason_threshold: 0.55,
+  spatial_falloff_multiplier: 4,
+} as const;
 
 export const REPORT_SCORING = {
   urgency_bonus: { low: 5, watch: 15, serious: 30, urgent: 45 },

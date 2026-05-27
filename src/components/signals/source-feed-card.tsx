@@ -18,15 +18,21 @@ export function SourceFeedCard({ feed }: { feed: SourceFeed }) {
       const response = await fetch(`/api/admin/sources/${feed.id}/${action}`, {
         method: "POST",
       });
-      const payload = (await response.json()) as { ok: boolean; error?: string; data?: { imported_count?: number; preview_items?: unknown[] } };
+      const payload = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+        data?: { imported_count?: number; duplicates_count?: number; preview_items?: unknown[] };
+      };
       if (!payload.ok) {
         setMessage(payload.error || "Request failed.");
         return;
       }
+      const duplicateNote =
+        action === "scan" && (payload.data?.duplicates_count || 0) > 0 ? ` ${payload.data?.duplicates_count} duplicate(s) skipped.` : "";
       setMessage(
         action === "scan"
-          ? `Mock scan imported ${payload.data?.imported_count || 0} signal(s).`
-          : `Mock preview ready for ${payload.data?.preview_items?.length || 0} item(s).`,
+          ? `Scan imported ${payload.data?.imported_count || 0} signal(s).${duplicateNote}`
+          : `Preview ready for ${payload.data?.preview_items?.length || 0} item(s).`,
       );
       window.setTimeout(() => router.refresh(), 450);
     });

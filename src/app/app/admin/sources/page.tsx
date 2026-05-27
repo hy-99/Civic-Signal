@@ -1,3 +1,4 @@
+import { JobsPanel } from "@/components/admin/jobs-panel";
 import { ErrorState, PageHeader } from "@/components/shared/states";
 import { SourceFeedCard } from "@/components/signals/source-feed-card";
 import { getCurrentViewer } from "@/services/auth";
@@ -13,6 +14,7 @@ export default async function AdminSourcesPage() {
   return (
     <div className="mx-auto grid max-w-[1280px] gap-6 p-4 md:p-6">
       <PageHeader eyebrow="Source Feeds" title="Manage public data sources" description="Configure RSS, city alerts, manual sources, and low-frequency scan shells." />
+      <JobsPanel />
       <div className="grid gap-4">
         {feeds.map((feed) => (
           <SourceFeedCard key={feed.id} feed={feed} />

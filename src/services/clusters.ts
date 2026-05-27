@@ -1,5 +1,6 @@
 import { CATEGORY_CONFIG } from "@/lib/constants";
 import { loadState, withMutableState } from "@/lib/data-store";
+import { bus } from "@/lib/events/bus";
 import type {
   ClusterItem,
   ClusterVoteType,
@@ -11,9 +12,12 @@ import type {
   RiskClusterStatus,
   RiskClusterView,
 } from "@/lib/types";
+import { averageVectors } from "@/lib/vector";
 import { generateActionPlan, summarizeRiskCluster } from "@/services/ai";
+import { createClusterMatchAuditText, findBestClusterMatchInState } from "@/services/clusters/semantic-match";
+import type { ClusterMatchResult } from "@/services/clusters/semantic-match";
 import { scoreCluster } from "@/services/scoring";
-import { averageCoordinates, createId, haversineDistanceMeters, nowIso } from "@/lib/utils";
+import { averageCoordinates, createId, nowIso } from "@/lib/utils";
 
 type CivicState = Awaited<ReturnType<typeof loadState>>;
 
@@ -25,6 +29,14 @@ export type RiskClusterMapStats = {
   urgent: number;
   cleared: number;
 };
+
+export type ClusterLinkResult = {
+  cluster: RiskCluster;
+  created: boolean;
+  match: ClusterMatchResult | null;
+};
+
+export { findBestClusterMatchInState };
 
 function getClusterItems(state: CivicState, cluster_id: string) {
   return state.cluster_items.filter((item) => item.cluster_id === cluster_id);
@@ -52,10 +64,6 @@ function summarizeClusterVotes(state: CivicState, cluster_id: string) {
     resolved: votes.filter((vote) => vote.vote_type === "resolved").length,
     monitor: votes.filter((vote) => vote.vote_type === "monitor").length,
   };
-}
-
-function categoryMatches(left: Report["category"], right: Report["category"]) {
-  return left === right || CATEGORY_CONFIG[left].related.includes(right) || CATEGORY_CONFIG[right].related.includes(left);
 }
 
 export function isPublicCluster(cluster: Pick<RiskCluster, "status">) {
@@ -100,10 +108,6 @@ export function applyClusterStatusToReportsInState(state: CivicState, cluster_id
   return updated;
 }
 
-function clusterWindowHours(category: Report["category"]) {
-  return CATEGORY_CONFIG[category].long_window_hours || 72;
-}
-
 function itemCoordinates(item: Pick<Report, "latitude" | "longitude"> | Pick<PublicSignal, "latitude" | "longitude">) {
   return {
     latitude: item.latitude ?? 0,
@@ -113,23 +117,9 @@ function itemCoordinates(item: Pick<Report, "latitude" | "longitude"> | Pick<Pub
 
 export function findMatchingClusterInState(
   state: Awaited<ReturnType<typeof loadState>>,
-  item: Pick<Report, "category" | "latitude" | "longitude" | "created_at">,
+  item: Pick<Report, "category" | "latitude" | "longitude" | "created_at"> & { embedding?: number[] | null },
 ) {
-  const windowHours = clusterWindowHours(item.category);
-  const eligible = state.risk_clusters.filter((cluster) => {
-    if (!isPublicCluster(cluster)) return false;
-    if (!categoryMatches(cluster.category, item.category)) return false;
-    const distance = haversineDistanceMeters(
-      { latitude: cluster.latitude, longitude: cluster.longitude },
-      { latitude: item.latitude, longitude: item.longitude },
-    );
-    const radius = Math.max(cluster.radius_meters, CATEGORY_CONFIG[item.category].cluster_radius_meters);
-    if (distance > radius) return false;
-    const lastActivityHours = (Date.now() - new Date(cluster.last_activity_at).getTime()) / 3_600_000;
-    return lastActivityHours <= windowHours;
-  });
-
-  return eligible.sort((a, b) => b.confidence_score - a.confidence_score)[0] || null;
+  return findBestClusterMatchInState(state, item)?.cluster || null;
 }
 
 export async function findMatchingCluster(item: Pick<Report, "category" | "latitude" | "longitude" | "created_at">) {
@@ -182,6 +172,10 @@ export async function recalculateClusterInState(state: Awaited<ReturnType<typeof
   const score = scoreCluster(cluster, reports, signals, voteSummary);
   const summary = await summarizeRiskCluster(cluster, reports, signals);
   const action_plan = await generateActionPlan(cluster, reports, signals);
+  const embedding = averageVectors(
+    [...reports.map((report) => report.embedding).filter((value): value is number[] => Array.isArray(value) && value.length > 0),
+    ...signals.map((signal) => signal.embedding).filter((value): value is number[] => Array.isArray(value) && value.length > 0)],
+  );
 
   cluster.report_count = reports.length;
   cluster.signal_count = signals.length;
@@ -192,6 +186,7 @@ export async function recalculateClusterInState(state: Awaited<ReturnType<typeof
   cluster.last_activity_at = nowIso();
   cluster.risk_score = score.risk_score;
   cluster.confidence_score = score.confidence_score;
+  cluster.embedding = embedding;
   cluster.risk_level = score.risk_level;
   cluster.summary = typeof summary.riskReason === "string" ? summary.riskReason : cluster.summary;
   cluster.action_plan = action_plan;
@@ -201,6 +196,7 @@ export async function recalculateClusterInState(state: Awaited<ReturnType<typeof
     matching_summary: typeof summary.confidenceReason === "string" ? summary.confidenceReason : undefined,
   };
   cluster.updated_at = nowIso();
+  bus.emit({ type: "cluster.updated", cluster });
   return cluster;
 }
 
@@ -217,6 +213,7 @@ export async function createClusterFromReportInState(state: Awaited<ReturnType<t
     risk_level: report.urgency,
     risk_score: report.risk_score,
     confidence_score: report.confidence_score,
+    embedding: report.embedding ?? null,
     report_count: 0,
     signal_count: 0,
     confirmation_count: 0,
@@ -253,6 +250,7 @@ export async function createClusterFromSignalInState(state: Awaited<ReturnType<t
     risk_level: signal.analysis_json.score_breakdown.risk_level,
     risk_score: signal.risk_score,
     confidence_score: signal.confidence_score,
+    embedding: signal.embedding ?? null,
     report_count: 0,
     signal_count: 0,
     confirmation_count: 0,
@@ -276,37 +274,58 @@ export async function createClusterFromSignal(signal: PublicSignal) {
   return withMutableState((state) => createClusterFromSignalInState(state, signal));
 }
 
-export async function linkReportToClusterInState(state: Awaited<ReturnType<typeof loadState>>, report: Report) {
-  const cluster = findMatchingClusterInState(state, report);
-  if (cluster) {
-    attachItemToClusterInState(state, cluster.id, "report", report.id, report.created_at);
-    report.cluster_id = cluster.id;
-    await recalculateClusterInState(state, cluster.id);
-    return cluster;
+export async function linkReportToClusterInState(state: Awaited<ReturnType<typeof loadState>>, report: Report): Promise<ClusterLinkResult> {
+  const match = findBestClusterMatchInState(state, report);
+  if (match) {
+    attachItemToClusterInState(state, match.cluster.id, "report", report.id, report.created_at);
+    report.cluster_id = match.cluster.id;
+    state.report_updates.push({
+      id: createId(),
+      report_id: report.id,
+      cluster_id: match.cluster.id,
+      user_id: null,
+      update_type: "system_analysis",
+      text: createClusterMatchAuditText(match),
+      metadata: {
+        cluster_match: {
+          reason: match.reason,
+          score: Number(match.score.toFixed(3)),
+          semantic_similarity: Number(match.semantic_similarity.toFixed(3)),
+          distance_meters: Math.round(match.distance_meters),
+        },
+      },
+      created_at: nowIso(),
+    });
+    await recalculateClusterInState(state, match.cluster.id);
+    return { cluster: match.cluster, created: false, match };
   }
-  return createClusterFromReportInState(state, report);
+  const cluster = await createClusterFromReportInState(state, report);
+  return { cluster, created: true, match: null };
 }
 
-export async function linkSignalToClusterInState(state: Awaited<ReturnType<typeof loadState>>, signal: PublicSignal) {
+export async function linkSignalToClusterInState(state: Awaited<ReturnType<typeof loadState>>, signal: PublicSignal): Promise<ClusterLinkResult> {
   if (signal.latitude === null || signal.longitude === null) {
-    return createClusterFromSignalInState(state, signal);
+    const cluster = await createClusterFromSignalInState(state, signal);
+    return { cluster, created: true, match: null };
   }
 
-  const cluster = findMatchingClusterInState(state, {
+  const match = findBestClusterMatchInState(state, {
     category: signal.category,
     latitude: signal.latitude,
     longitude: signal.longitude,
     created_at: signal.published_at || signal.created_at,
+    embedding: signal.embedding,
   });
 
-  if (cluster) {
-    attachItemToClusterInState(state, cluster.id, "signal", signal.id, signal.created_at);
-    signal.cluster_id = cluster.id;
-    await recalculateClusterInState(state, cluster.id);
-    return cluster;
+  if (match) {
+    attachItemToClusterInState(state, match.cluster.id, "signal", signal.id, signal.created_at);
+    signal.cluster_id = match.cluster.id;
+    await recalculateClusterInState(state, match.cluster.id);
+    return { cluster: match.cluster, created: false, match };
   }
 
-  return createClusterFromSignalInState(state, signal);
+  const cluster = await createClusterFromSignalInState(state, signal);
+  return { cluster, created: true, match: null };
 }
 
 function buildClusterView(state: CivicState, cluster: RiskCluster): RiskClusterView {
@@ -450,6 +469,7 @@ export async function mergeClusters(source_id: string, target_id: string) {
     source.status = "hidden";
     source.updated_at = nowIso();
     await recalculateClusterInState(state, target_id);
+    bus.emit({ type: "cluster.merged", from_id: source_id, into_id: target_id });
     return target;
   });
 }

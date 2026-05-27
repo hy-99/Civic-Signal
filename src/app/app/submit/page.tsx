@@ -4,18 +4,23 @@ import { X } from "lucide-react";
 import { ReportForm } from "@/components/forms/report-form";
 import { CommandCenter } from "@/components/map/command-center";
 import { getCurrentViewer } from "@/services/auth";
+import { getAllCaseEvents, getIncidentCases } from "@/services/cases";
 import { getRiskClusters } from "@/services/clusters";
 import { getReports } from "@/services/reports";
+import { getDangerZones } from "@/services/zones";
 
 export default async function SubmitPage() {
   const viewer = await getCurrentViewer();
-  const [clusters, reports] = await Promise.all([
+  const [clusters, reports, cases, zones, caseEvents] = await Promise.all([
     getRiskClusters({ sort: "urgent" }),
     getReports({ sort: "urgent", viewer }),
+    getIncidentCases({ include_private: true }),
+    getDangerZones({ include_private: true }),
+    getAllCaseEvents(),
   ]);
 
   return (
-    <CommandCenter clusters={clusters} reports={reports} submitMode>
+    <CommandCenter clusters={clusters} reports={reports} cases={cases} zones={zones} caseEvents={caseEvents} submitMode>
       <section className="flex max-h-[calc(100vh-88px)] w-full max-w-[650px] flex-col overflow-hidden rounded-2xl bg-white shadow-[0_36px_90px_rgba(15,23,42,0.35)]">
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
           <div>

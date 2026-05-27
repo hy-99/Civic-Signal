@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
-import path from "node:path";
 
-import { hasGroqConfig, hasOpenAIConfig } from "@/lib/env";
+import { getEnv, hasGeminiConfig } from "@/lib/env";
 import { withMutableState } from "@/lib/data-store";
 import type { AiCacheEntry, ImageAnalysisResult, PublicSignal, Report, RiskCluster } from "@/lib/types";
+import { normalizeVector } from "@/lib/vector";
 import { createId, nowIso } from "@/lib/utils";
 
 function hashInput(input: unknown) {
@@ -59,41 +58,204 @@ function fallbackClusterSummary(cluster: RiskCluster, reports: Report[], signals
   };
 }
 
-async function callOpenAI(task_type: string, input: Record<string, unknown>) {
-  if (!hasOpenAIConfig()) return null;
+function extractGeminiText(payload: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }) {
+  return payload.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("").trim() || "";
+}
+
+const TOKEN_ALIASES: Record<string, string> = {
+  fallen: "down",
+  downed: "down",
+  huge: "large",
+  big: "large",
+  branch: "tree",
+  branches: "tree",
+  limb: "tree",
+  limbs: "tree",
+  oak: "tree",
+  pine: "tree",
+  street: "street",
+  st: "street",
+  road: "street",
+  rd: "street",
+  avenue: "street",
+  ave: "street",
+  blocking: "block",
+  blocked: "block",
+  blockage: "block",
+  closure: "block",
+  closed: "block",
+  lane: "street",
+  lanes: "street",
+  smoke: "fire",
+  wildfire: "fire",
+  flood: "flooding",
+  flooded: "flooding",
+  winds: "storm",
+  wind: "storm",
+  gusts: "storm",
+  obstruction: "block",
+  obstructed: "block",
+};
+
+const EMBEDDING_DIMENSIONS = 768;
+const STOP_WORDS = new Set(["a", "an", "the", "is", "are", "on", "in", "at", "to", "for", "of", "and", "after", "near", "across"]);
+const FEATURE_WEIGHTS: Record<string, number> = {
+  tree: 2.4,
+  block: 2.2,
+  street: 1.5,
+  main: 1.2,
+  main_street: 2.8,
+  down: 1.8,
+  storm: 1.5,
+  flooding: 2.4,
+  fire: 2.4,
+};
+const SEMANTIC_CONCEPTS = [
+  "tree",
+  "block",
+  "street",
+  "main",
+  "main_street",
+  "down",
+  "storm",
+  "flooding",
+  "fire",
+  "power",
+  "crowd",
+  "school",
+  "weather",
+] as const;
+
+function hashString(value: string) {
+  const digest = createHash("sha256").update(value).digest();
+  return digest.readUInt32BE(0);
+}
+
+function tokenizeEmbeddingText(text: string) {
+  const normalized = text
+    .toLowerCase()
+    .replace(/main st\b/g, "main street")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = normalized
+    .split(" ")
+    .filter(Boolean)
+    .map((token) => TOKEN_ALIASES[token] || token);
+
+  const meaningfulTokens = tokens.filter((token) => token.length > 1 && !STOP_WORDS.has(token));
+  const features = [...meaningfulTokens];
+  for (let index = 0; index < meaningfulTokens.length - 1; index += 1) {
+    features.push(`${meaningfulTokens[index]}_${meaningfulTokens[index + 1]}`);
+  }
+
+  return features;
+}
+
+function buildFallbackEmbedding(text: string) {
+  const vector = Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0);
+  const features = tokenizeEmbeddingText(text);
+
+  if (!features.length) return vector;
+
+  for (const feature of features) {
+    const conceptIndex = SEMANTIC_CONCEPTS.indexOf(feature as (typeof SEMANTIC_CONCEPTS)[number]);
+    if (conceptIndex >= 0) {
+      vector[conceptIndex] += FEATURE_WEIGHTS[feature] || 1.5;
+    }
+  }
+
+  for (const [index, feature] of features.entries()) {
+    const seed = hashString(`${feature}:${index}`);
+    const primary = seed % EMBEDDING_DIMENSIONS;
+    const secondary = (seed >>> 11) % EMBEDDING_DIMENSIONS;
+    const weight = FEATURE_WEIGHTS[feature] || (feature.includes("_") ? 1.6 : 1);
+
+    vector[primary] += weight;
+    vector[secondary] += weight * 0.35;
+  }
+
+  return normalizeVector(vector);
+}
+
+export async function generateEmbedding(text: string): Promise<number[]> {
+  const normalized = text.trim();
+  if (!normalized) return Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0);
+
+  const env = getEnv();
+  if (!env.gemini_api_key) {
+    return buildFallbackEmbedding(normalized);
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.gemini_embedding_model)}:embedContent?key=${encodeURIComponent(env.gemini_api_key)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content: {
+            parts: [{ text: normalized }],
+          },
+          taskType: "CLUSTERING",
+        }),
+      },
+    );
+
+    if (!response.ok) return buildFallbackEmbedding(normalized);
+    const payload = (await response.json()) as { embedding?: { values?: number[] } };
+    const values = payload.embedding?.values;
+    if (!Array.isArray(values) || !values.every((value) => typeof value === "number")) {
+      return buildFallbackEmbedding(normalized);
+    }
+    return normalizeVector(values);
+  } catch {
+    return buildFallbackEmbedding(normalized);
+  }
+}
+
+export async function runGeminiJsonTask(task_type: string, input: Record<string, unknown>, systemInstruction: string) {
+  if (!hasGeminiConfig()) return null;
   const cache_key = `${task_type}:${hashInput(input)}`;
   const cached = await getCachedAIResult(cache_key);
   if (cached) return cached.output_json;
 
+  const env = getEnv();
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.gemini_model)}:generateContent?key=${encodeURIComponent(env.gemini_api_key)}`,
+      {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input: [
-          {
-            role: "system",
-            content:
-              "You are a civic risk analysis assistant. Focus on places, hazards, and evidence. Never accuse individuals. Return JSON only.",
-          },
+        systemInstruction: {
+          parts: [{ text: systemInstruction }],
+        },
+        contents: [
           {
             role: "user",
-            content: JSON.stringify(input),
+            parts: [{ text: JSON.stringify(input) }],
           },
         ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+        },
       }),
-    });
+    },
+    );
 
     if (!response.ok) return null;
-    const payload = (await response.json()) as {
-      output_text?: string;
-    };
-    if (!payload.output_text) return null;
-    const parsed = JSON.parse(payload.output_text) as Record<string, unknown>;
+    const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const text = extractGeminiText(payload);
+    if (!text) return null;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch?.[0] || text) as Record<string, unknown>;
     await saveAIResult(cache_key, task_type, parsed);
     return parsed;
   } catch {
@@ -166,10 +328,10 @@ const IMAGE_ANALYSIS_FALLBACK: ImageAnalysisResult = {
   confirms_hazard: false,
   severity_estimate: "low",
   danger_score: 0,
-  danger_reasoning: "Image analysis unavailable — Groq API key not configured.",
+  danger_reasoning: "Image analysis unavailable — Gemini API key not configured.",
   danger_factors: [],
   evidence_score: 0,
-  score_reasoning: "Image analysis unavailable — Groq API key not configured.",
+  score_reasoning: "Image analysis unavailable — Gemini API key not configured.",
   details_observed: "Could not analyze image.",
   authenticity_flag: "unclear",
   pii_detected: false,
@@ -198,8 +360,9 @@ export async function analyzeReportImage(
   mimeType: string,
   claim: ReportClaim | null = null,
 ): Promise<ImageAnalysisResult> {
-  if (!hasGroqConfig()) return IMAGE_ANALYSIS_FALLBACK;
+  if (!hasGeminiConfig()) return IMAGE_ANALYSIS_FALLBACK;
 
+  const env = getEnv();
   const imageHash = createHash("sha256").update(Buffer.from(imageBytes)).digest("hex");
   const claimHash = claim ? createHash("sha256").update(JSON.stringify(claim)).digest("hex") : "no_claim";
   const cache_key = `analyze_report_image:${imageHash}:${claimHash}`;
@@ -207,38 +370,45 @@ export async function analyzeReportImage(
   if (cached) return cached.output_json as unknown as ImageAnalysisResult;
 
   const base64 = Buffer.from(imageBytes).toString("base64");
-  const dataUrl = `data:${mimeType};base64,${base64}`;
-
   try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [
-          { role: "system", content: IMAGE_ANALYSIS_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [
-              { type: "image_url", image_url: { url: dataUrl } },
-              { type: "text", text: buildClaimUserMessage(claim) },
-            ],
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.gemini_vision_model)}:generateContent?key=${encodeURIComponent(env.gemini_api_key)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: IMAGE_ANALYSIS_SYSTEM_PROMPT }],
           },
-        ],
-        max_tokens: 1024,
-        temperature: 0.1,
-      }),
-    });
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  inline_data: {
+                    mime_type: mimeType,
+                    data: base64,
+                  },
+                },
+                { text: buildClaimUserMessage(claim) },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            maxOutputTokens: 1400,
+            temperature: 0.1,
+          },
+        }),
+      },
+    );
 
     if (!response.ok) return IMAGE_ANALYSIS_FALLBACK;
 
-    const payload = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const content = payload.choices?.[0]?.message?.content?.trim();
+    const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const content = extractGeminiText(payload);
     if (!content) return IMAGE_ANALYSIS_FALLBACK;
 
     const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -279,41 +449,52 @@ export async function checkClaimImageConsistency(
   claim: { title: string; description: string; category_label: string },
   detailsObserved: string,
 ): Promise<ClaimImageConsistencyVerdict | null> {
-  if (!hasGroqConfig()) return null;
+  if (!hasGeminiConfig()) return null;
   const input = { claim, details_observed: detailsObserved };
   const cache_key = `check_claim_image_consistency:${hashInput(input)}`;
   const cached = await getCachedAIResult(cache_key);
   if (cached) return cached.output_json as unknown as ClaimImageConsistencyVerdict;
 
+  const env = getEnv();
   try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [
-          { role: "system", content: CLAIM_CONSISTENCY_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [
-              `Category: ${claim.category_label}`,
-              `Title: ${claim.title}`,
-              `Description: ${claim.description}`,
-              `Image shows: ${detailsObserved}`,
-              "Return the JSON verdict.",
-            ].join("\n"),
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(env.gemini_model)}:generateContent?key=${encodeURIComponent(env.gemini_api_key)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: CLAIM_CONSISTENCY_SYSTEM_PROMPT }],
           },
-        ],
-        max_tokens: 256,
-        temperature: 0,
-      }),
-    });
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: [
+                    `Category: ${claim.category_label}`,
+                    `Title: ${claim.title}`,
+                    `Description: ${claim.description}`,
+                    `Image shows: ${detailsObserved}`,
+                    "Return the JSON verdict.",
+                  ].join("\n"),
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            maxOutputTokens: 320,
+            temperature: 0,
+          },
+        }),
+      },
+    );
     if (!response.ok) return null;
-    const payload = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-    const content = payload.choices?.[0]?.message?.content?.trim();
+    const payload = (await response.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const content = extractGeminiText(payload);
     if (!content) return null;
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
@@ -337,7 +518,13 @@ export async function analyzeReportText(report: Pick<Report, "title" | "descript
     moderationFlags: [],
   };
 
-  return (await callOpenAI("analyze_report_text", report)) || fallback;
+  return (
+    await runGeminiJsonTask(
+      "analyze_report_text",
+      report,
+      "You are a civic risk analysis assistant. Focus on places, hazards, and evidence. Never accuse individuals. Return JSON only.",
+    )
+  ) || fallback;
 }
 
 
@@ -351,15 +538,31 @@ export async function classifyPublicSignal(signal: Pick<PublicSignal, "title" | 
     moderationFlags: [],
   };
 
-  return (await callOpenAI("classify_public_signal", signal)) || fallback;
+  return (
+    await runGeminiJsonTask(
+      "classify_public_signal",
+      signal,
+      "You classify public civic signals. Focus on public conditions and place-based hazards. Return JSON only.",
+    )
+  ) || fallback;
 }
 
 export async function summarizeRiskCluster(cluster: RiskCluster, reports: Report[], signals: PublicSignal[]) {
-  return (await callOpenAI("summarize_risk_cluster", { cluster, reports, signals })) || fallbackClusterSummary(cluster, reports, signals);
+  return (
+    await runGeminiJsonTask(
+      "summarize_risk_cluster",
+      { cluster, reports, signals },
+      "Summarize a civic risk cluster without accusing private people. Return JSON only.",
+    )
+  ) || fallbackClusterSummary(cluster, reports, signals);
 }
 
 export async function generateActionPlan(cluster: RiskCluster, reports: Report[], signals: PublicSignal[]) {
   const fallback = fallbackClusterSummary(cluster, reports, signals).recommendedAction;
-  const result = await callOpenAI("generate_action_plan", { cluster, reports, signals });
+  const result = await runGeminiJsonTask(
+    "generate_action_plan",
+    { cluster, reports, signals },
+    "Create a concise operational action plan for a civic incident. Return JSON only.",
+  );
   return typeof result?.recommendedAction === "string" ? result.recommendedAction : fallback;
 }

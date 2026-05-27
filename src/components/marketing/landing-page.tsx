@@ -3,13 +3,58 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, MapPin, ShieldCheck } from "lucide-react";
+import type { CSSProperties } from "react";
+import {
+  CheckCircle2,
+  ArrowRight,
+  Activity,
+  Shield,
+  Globe,
+  Menu,
+  X,
+} from "lucide-react";
 
-import { APP_DESCRIPTION, APP_TAGLINE } from "@/lib/constants";
-import { LaunchButton } from "@/components/marketing/launch-button";
+import { APP_DESCRIPTION } from "@/lib/constants";
 import { LaunchOverlay, OVERLAY_DURATION_MS } from "@/components/marketing/launch-overlay";
-import { SiteHeader } from "@/components/layout/site-header";
 import { BrandWordmark } from "@/components/shared/brand";
+
+type RuntimeSplineApp = {
+  load: (scene: string) => Promise<unknown>;
+  dispose?: () => void;
+};
+
+function Spline({ scene, style }: { scene: string; style?: CSSProperties }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let app: RuntimeSplineApp | null = null;
+
+    async function loadScene() {
+      const { Application } = await import("@splinetool/runtime");
+      if (cancelled || !canvasRef.current) return;
+      const nextApp = new Application(canvasRef.current, { renderOnDemand: true });
+      app = nextApp;
+      await nextApp.load(scene);
+    }
+
+    void loadScene();
+
+    return () => {
+      cancelled = true;
+      app?.dispose?.();
+    };
+  }, [scene]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-label="CivicSignal interactive 3D scene"
+      className="block h-full w-full"
+      style={style}
+    />
+  );
+}
 
 const useCases = [
   "Road hazards",
@@ -28,218 +73,269 @@ const useCases = [
 ];
 
 const LANDING_EXIT_MS = 680;
-
 type LaunchPhase = "idle" | "exiting" | "overlay";
+
+/* Stars removed — background is now pure black */
+
+/* ================================================================ */
 
 export function LandingPage() {
   const router = useRouter();
   const [phase, setPhase] = useState<LaunchPhase>("idle");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const timersRef = useRef<number[]>([]);
 
+  useEffect(() => { router.prefetch("/app/map"); }, [router]);
   useEffect(() => {
-    router.prefetch("/app/map");
-  }, [router]);
-
-  useEffect(() => {
-    return () => {
-      timersRef.current.forEach((timer) => window.clearTimeout(timer));
-      timersRef.current = [];
-    };
+    return () => { timersRef.current.forEach((t) => window.clearTimeout(t)); timersRef.current = []; };
   }, []);
 
   const start = () => {
     if (phase !== "idle") return;
     setPhase("exiting");
-    timersRef.current.forEach((timer) => window.clearTimeout(timer));
-    const overlayTimer = window.setTimeout(() => setPhase("overlay"), LANDING_EXIT_MS);
-    const navTimer = window.setTimeout(() => {
-      router.push("/app/map");
-    }, LANDING_EXIT_MS + OVERLAY_DURATION_MS);
-    timersRef.current = [overlayTimer, navTimer];
+    timersRef.current.forEach((t) => window.clearTimeout(t));
+    const a = window.setTimeout(() => setPhase("overlay"), LANDING_EXIT_MS);
+    const b = window.setTimeout(() => router.push("/app/map"), LANDING_EXIT_MS + OVERLAY_DURATION_MS);
+    timersRef.current = [a, b];
   };
 
-  return (
-    <div className="cs-landing" data-launch-phase={phase}>
-      <div className="cs-landing__header">
-        <SiteHeader />
-      </div>
-      <main className="bg-[#eef3f8]">
-      <section className="civic-hero-surface relative overflow-hidden px-5 py-12 text-white shadow-[inset_0_-1px_0_rgba(255,255,255,0.18)] md:px-8 lg:min-h-[calc(100vh-73px)] lg:px-12 lg:py-0">
-        <div className="cs-landing__veil" aria-hidden="true" />
-        <div className="mx-auto grid h-full max-w-[1360px] gap-10 lg:grid-cols-[0.86fr_1.14fr] lg:items-center">
-          <div className="max-w-[620px] py-8 lg:py-16">
-            <div className="cs-landing__eyebrow inline-flex items-center rounded-full border border-white/20 bg-white/10 px-4 py-2">
-              <BrandWordmark variant="hero" />
-            </div>
+  const scroll = (e: React.MouseEvent<HTMLAnchorElement>, id: string) => {
+    if (!id.startsWith("#")) return;
+    e.preventDefault();
+    document.getElementById(id.slice(1))?.scrollIntoView({ behavior: "smooth" });
+    setMobileMenuOpen(false);
+  };
 
-            <h1 className="cs-landing__title mt-8 text-5xl font-black uppercase leading-[0.9] tracking-[-0.05em] text-white drop-shadow-sm sm:text-6xl lg:text-7xl">
-              <span className="block">Spot it.</span>
-              <span className="block text-[#ffd84d]">Verify it.</span>
-              <span className="block">Prioritize it.</span>
+  const NAV = [
+    { label: "Why CivicSignal", id: "#why-exists" },
+    { label: "How it Works",    id: "#how-it-works" },
+    { label: "Use Cases",       id: "#use-cases" },
+    { label: "Trust & Safety",  id: "#safety" },
+  ];
+
+  return (
+    <div className="cs-landing min-h-screen bg-black text-white overflow-x-hidden font-sans selection:bg-violet-500/30" data-launch-phase={phase}>
+      {/* ── BG (full viewport, purely visual, behind everything) ── */}
+      <div className="pointer-events-none fixed inset-0 z-[1] overflow-hidden">
+        <div style={{ width: "100%", height: "100%", transform: "scale(2)", transformOrigin: "center center" }}>
+          <Spline
+            scene="https://prod.spline.design/MT6TuRosOUJ9iepP/scene.splinecode"
+            style={{ width: "100%", height: "100%", display: "block" }}
+          />
+        </div>
+      </div>
+
+      {/* ── Interactive Sphere — right side, shifted left ── */}
+      <div className="fixed inset-y-0 right-0 z-[5] overflow-hidden" style={{ width: "53vw", pointerEvents: "auto" }}>
+        <div style={{ width: "100%", height: "100%", transform: "scale(1.3)", transformOrigin: "center center" }}>
+          <Spline
+            scene="https://prod.spline.design/gswP1SFrmdXHmM9t/scene.splinecode"
+            style={{ width: "100%", height: "100%", display: "block" }}
+          />
+        </div>
+      </div>
+
+      {/* ── header ── */}
+      <header className="sticky top-0 z-50 w-full px-4 py-3.5 md:px-8" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.6) 100%)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
+        <div className="mx-auto flex max-w-[1280px] items-center justify-between">
+          <Link href="/" className="z-50 inline-flex items-center">
+            <BrandWordmark variant="hero" className="opacity-90 hover:opacity-100 transition" />
+          </Link>
+
+          <nav className="hidden md:flex items-center gap-0.5 rounded-full border border-white/[0.07] bg-white/[0.025] backdrop-blur-xl px-1.5 py-1 transition duration-300 hover:bg-white/[0.04] hover:border-white/[0.1] shadow-[0_4px_30px_rgba(0,0,0,0.55)]">
+            {NAV.map((n) => (
+              <a key={n.id} href={n.id} onClick={(e) => scroll(e, n.id)}
+                className="rounded-full px-3.5 py-1.5 text-[11px] font-medium text-slate-300/90 transition hover:text-white">{n.label}</a>
+            ))}
+          </nav>
+
+          <div className="hidden md:flex items-center gap-4">
+            <Link href="/app/map" className="text-[11px] font-medium text-slate-400 transition hover:text-white">Login</Link>
+            <button onClick={start} disabled={phase !== "idle"}
+              className="rounded-full border border-violet-500/35 bg-violet-600 px-4.5 py-1.5 text-[11px] font-semibold text-white shadow-[0_0_14px_rgba(124,58,237,0.3)] transition hover:bg-violet-500 hover:shadow-[0_0_22px_rgba(124,58,237,0.5)] active:scale-95 disabled:opacity-50">
+              Launch Dashboard
+            </button>
+          </div>
+
+          <button className="z-50 p-2 text-slate-400 hover:text-white transition md:hidden"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)} aria-label="Toggle menu">
+            {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
+
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-5 bg-[#020008]/98 backdrop-blur-2xl px-6">
+            {NAV.map((n) => (
+              <a key={n.id} href={n.id} onClick={(e) => scroll(e, n.id)}
+                className="border-b border-white/5 py-2 text-lg font-semibold text-slate-300 hover:text-white transition">{n.label}</a>
+            ))}
+            <div className="mt-6 flex flex-col gap-3 w-56">
+              <Link href="/app/map" className="rounded-full border border-white/10 py-2.5 text-center text-sm font-medium text-slate-300 hover:text-white transition">Login</Link>
+              <button onClick={start} className="rounded-full bg-violet-600 py-2.5 text-sm font-bold text-white">Launch Dashboard</button>
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* ─── main ────────────────────────────────────────────── */}
+      <main className="relative">
+
+        {/* ══ hero ══════════════════════════════════════════════ */}
+        <section className="relative flex min-h-[calc(100vh-60px)] flex-col items-center justify-end overflow-hidden px-5 pb-[18vh] sm:pb-[20vh]">
+
+          {/* ── Spline 3D robot (left 62.5%, interactive, above BG) ── */}
+          <div id="spline-slot" className="absolute top-0 bottom-0 left-0 z-[5]" style={{ width: "62.5%", pointerEvents: "auto" }}>
+            <Spline scene="https://prod.spline.design/G6Ni0wPVm08EDyPb/scene.splinecode" />
+          </div>
+
+          {/* ── twinkling stars (right side) ── */}
+          <div className="pointer-events-none absolute inset-0 z-[1]">
+            {[
+              { x: "62%", y: "8%",  s: 1.5, o: 0.4,  a: "cs-twinkle-a 4s ease-in-out infinite" },
+              { x: "66%", y: "25%", s: 1,   o: 0.25, a: "cs-twinkle-b 5.5s ease-in-out 1s infinite" },
+              { x: "70%", y: "48%", s: 1.5, o: 0.3,  a: "cs-twinkle-c 6s ease-in-out infinite" },
+              { x: "64%", y: "72%", s: 1,   o: 0.2,  a: "cs-twinkle-a 7s ease-in-out 2s infinite" },
+              { x: "74%", y: "12%", s: 2,   o: 0.45, a: "cs-twinkle-c 4.5s ease-in-out infinite" },
+              { x: "78%", y: "35%", s: 1,   o: 0.22, a: "cs-twinkle-b 6.5s ease-in-out 0.5s infinite" },
+              { x: "72%", y: "60%", s: 1,   o: 0.3,  a: "cs-twinkle-a 5s ease-in-out 1.5s infinite" },
+              { x: "82%", y: "5%",  s: 1,   o: 0.35, a: "cs-twinkle-b 5s ease-in-out infinite" },
+              { x: "86%", y: "28%", s: 1.5, o: 0.28, a: "cs-twinkle-c 7s ease-in-out 3s infinite" },
+              { x: "80%", y: "52%", s: 1,   o: 0.2,  a: "cs-twinkle-a 6s ease-in-out infinite" },
+              { x: "84%", y: "78%", s: 1,   o: 0.25, a: "cs-twinkle-b 5.5s ease-in-out 2s infinite" },
+              { x: "90%", y: "15%", s: 1,   o: 0.32, a: "cs-twinkle-a 4.8s ease-in-out 0.8s infinite" },
+              { x: "88%", y: "42%", s: 1.5, o: 0.18, a: "cs-twinkle-c 6.5s ease-in-out infinite" },
+              { x: "92%", y: "65%", s: 1,   o: 0.22, a: "cs-twinkle-b 4s ease-in-out 1.2s infinite" },
+              { x: "94%", y: "8%",  s: 1,   o: 0.38, a: "cs-twinkle-a 5.5s ease-in-out infinite" },
+              { x: "96%", y: "50%", s: 1,   o: 0.15, a: "cs-twinkle-c 7.5s ease-in-out 2.5s infinite" },
+              { x: "68%", y: "88%", s: 1.5, o: 0.2,  a: "cs-twinkle-b 4.5s ease-in-out infinite" },
+              { x: "76%", y: "92%", s: 1,   o: 0.18, a: "cs-twinkle-a 6s ease-in-out 1s infinite" },
+              { x: "91%", y: "82%", s: 1,   o: 0.25, a: "cs-twinkle-c 5s ease-in-out infinite" },
+              { x: "65%", y: "40%", s: 1,   o: 0.15, a: "cs-twinkle-b 6.8s ease-in-out 3.5s infinite" },
+            ].map((s, i) => (
+              <span key={i} className="absolute block rounded-full bg-white"
+                style={{ left: s.x, top: s.y, width: `${s.s}px`, height: `${s.s}px`, opacity: s.o, animation: s.a }} />
+            ))}
+          </div>
+
+          {/* ── centred text (pointer-events pass through to Spline) ── */}
+          <div className="pointer-events-none relative z-20 flex flex-col items-center">
+            {/* heading */}
+            <h1 className="mt-7 max-w-[720px] text-center text-[1.85rem] font-semibold leading-[1.18] tracking-tight text-white sm:text-[2.6rem] md:text-[3.2rem] lg:text-[3.5rem]">
+              Think smarter with CivicSignal
             </h1>
 
-            <p className="cs-landing__sub mt-7 max-w-xl text-lg leading-8 text-blue-50/88">
-              {APP_TAGLINE} Publish hazards with a title, location, and photo evidence so nearby people know what to avoid and responders can see what needs action.
+            {/* subtitle */}
+            <p className="mt-4 max-w-[440px] text-center text-[12.5px] leading-relaxed text-slate-400/90 sm:text-[13.5px]">
+              Never miss a hazard, signal, or civic incident.
             </p>
 
-            <div className="cs-landing__cta mt-8 flex flex-wrap gap-3">
-              <LaunchButton onLaunch={start} disabled={phase !== "idle"} />
-              <Link
-                href="/app/submit"
-                className="inline-flex items-center gap-2 rounded-xl border border-white/45 bg-white/8 px-6 py-4 text-sm font-black text-white transition hover:bg-white/14"
-              >
+            {/* CTAs */}
+            <div className="mt-6 flex items-center gap-3">
+              <button onClick={start} disabled={phase !== "idle"}
+                className="pointer-events-auto inline-flex items-center gap-2 rounded-xl border border-violet-500/25 bg-violet-600 px-5 py-2.5 text-[11px] font-semibold text-white shadow-[0_0_18px_rgba(124,58,237,0.3)] transition hover:bg-violet-500 hover:shadow-[0_0_28px_rgba(124,58,237,0.45)] active:scale-[0.97] disabled:opacity-50">
+                Open Live Map <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+              <Link href="/app/submit"
+                className="pointer-events-auto inline-flex items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.025] px-5 py-2.5 text-[11px] font-medium text-slate-300 backdrop-blur-sm transition hover:bg-white/[0.05] hover:text-white active:scale-[0.97]">
                 Submit a Report
               </Link>
             </div>
+          </div>
+        </section>
 
-            <div className="cs-landing__stats mt-10 grid max-w-xl grid-cols-3 gap-5">
-              {[
-                ["34", "Mapped areas"],
-                ["24+", "Public signals"],
-                ["Live", "Hazard map"],
-              ].map(([value, label]) => (
-                <div key={label}>
-                  <p className="text-3xl font-black tracking-[-0.04em] text-[#ffd84d] sm:text-4xl">{value}</p>
-                  <p className="mt-1 text-xs font-semibold text-blue-50/78 sm:text-sm">{label}</p>
+        {/* ══ why it exists ═════════════════════════════════════ */}
+        <section id="why-exists" className="relative z-10 border-t border-white/[0.03] px-5 py-24"
+          style={{ background: "linear-gradient(180deg, rgba(21,0,64,0.5) 0%, rgba(10,0,30,0.8) 100%)" }}>
+          <div className="mx-auto max-w-[1080px]">
+            <div className="mx-auto max-w-2xl text-center">
+              <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-violet-400">Mission & Philosophy</span>
+              <h2 className="mt-4 text-2xl font-semibold tracking-tight text-white sm:text-3xl">Civic problems are visible, but the signals are scattered</h2>
+              <p className="mt-4 text-xs leading-relaxed text-slate-400 sm:text-sm">{APP_DESCRIPTION}</p>
+            </div>
+            <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {([
+                { title: "1. Capture & Report", body: "Residents publish hazard locations, details, and photo evidence — documenting issues before they escalate.", icon: <Globe className="h-[18px] w-[18px] text-violet-400" /> },
+                { title: "2. Triangulate & Verify", body: "Community confirmations and live feed scanning separate verified clusters from false alarms automatically.", icon: <Activity className="h-[18px] w-[18px] text-cyan-400" /> },
+                { title: "3. Prioritize & Resolve", body: "The live map scores incidents separately for risk and confidence, highlighting urgent danger areas for responders.", icon: <Shield className="h-[18px] w-[18px] text-violet-400" /> },
+              ]).map((c, i) => (
+                <div key={i} className="group rounded-2xl border border-white/[0.04] bg-white/[0.01] p-7 backdrop-blur-sm transition duration-300 hover:border-violet-500/15 hover:bg-white/[0.02]">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.03] transition duration-300 group-hover:border-violet-500/20">{c.icon}</div>
+                  <h3 className="mt-5 text-sm font-semibold text-white">{c.title}</h3>
+                  <p className="mt-2 text-xs leading-relaxed text-slate-400">{c.body}</p>
                 </div>
               ))}
             </div>
           </div>
+        </section>
 
-          <div className="cs-landing__card-wrap relative min-h-[430px] py-8 lg:min-h-[620px]">
-            <div className="cs-landing__chip-yellow absolute right-[8%] top-[8%] rounded-full bg-[#ffd84d] px-4 py-2 text-sm font-black text-slate-950 shadow-[0_18px_34px_rgba(0,0,0,0.2)]">
-              +12 new signals
+        {/* ══ how it works ══════════════════════════════════════ */}
+        <section id="how-it-works" className="relative z-10 border-t border-white/[0.03] px-5 py-24"
+          style={{ background: "linear-gradient(180deg, rgba(10,0,30,0.8) 0%, rgba(6,0,20,0.9) 100%)" }}>
+          <div className="mx-auto max-w-[880px]">
+            <div className="mx-auto max-w-xl text-center">
+              <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-cyan-400">Platform Blueprint</span>
+              <h2 className="mt-4 text-2xl font-semibold tracking-tight text-white sm:text-3xl">How CivicSignal orchestrates response</h2>
             </div>
-            <div className="cs-landing__chip-green absolute bottom-[11%] left-[7%] rounded-full bg-emerald-500 px-4 py-2 text-sm font-black text-white shadow-[0_18px_34px_rgba(0,0,0,0.18)]">
-              Verification active
+            <div className="mt-14 grid gap-4">
+              {[
+                "A resident witnesses a public hazard and submits a report with photo evidence.",
+                "CivicSignal registers category, precise coordinates, time, and surrounding safety parameters.",
+                "Deterministic and AI clustering algorithms combine related reports into managed incident groups.",
+                "Explainable risk scoring separates uncertainty from danger, providing high-confidence triage.",
+                "Residents track progress, moderators filter signals, and official responders act on resolved cases.",
+              ].map((step, i) => (
+                <div key={i} className="grid grid-cols-[auto_1fr] items-start gap-5 rounded-xl border border-white/[0.03] bg-white/[0.008] p-5 transition duration-300 hover:border-violet-500/10 hover:bg-white/[0.015]">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 text-[10px] font-black text-white shadow-[0_0_10px_rgba(124,58,237,0.2)]">{i + 1}</div>
+                  <p className="pt-0.5 text-xs leading-relaxed text-slate-300 sm:text-sm">{step}</p>
+                </div>
+              ))}
             </div>
+          </div>
+        </section>
 
-            <div className="cs-landing__card absolute left-1/2 top-1/2 w-[min(640px,94vw)] -translate-x-1/2 -translate-y-1/2 rotate-2 rounded-[1.6rem] border border-white/35 bg-white p-5 text-slate-950 shadow-[0_34px_92px_rgba(8,20,74,0.34)] md:p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">CivicSignal preview</p>
-                  <h2 className="mt-2 text-2xl font-black tracking-[-0.04em]">Recent reports</h2>
-                </div>
-                <div className="flex gap-2">
-                  <span className="h-3 w-3 rounded-full bg-rose-300" />
-                  <span className="h-3 w-3 rounded-full bg-amber-300" />
-                  <span className="h-3 w-3 rounded-full bg-emerald-300" />
-                </div>
-              </div>
+        {/* ══ use cases ═════════════════════════════════════════ */}
+        <section id="use-cases" className="relative z-10 border-t border-white/[0.03] px-5 py-24"
+          style={{ background: "linear-gradient(180deg, rgba(6,0,20,0.9) 0%, rgba(4,0,14,0.95) 100%)" }}>
+          <div className="mx-auto max-w-[880px] text-center">
+            <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-violet-400">Hazards Covered</span>
+            <h2 className="mt-4 text-2xl font-semibold tracking-tight text-white sm:text-3xl">Comprehensive category tracking</h2>
+            <p className="mx-auto mt-3 max-w-md text-xs text-slate-400 sm:text-sm">CivicSignal evaluates and structures a wide spectrum of citizen hazards and urban disturbances.</p>
+            <div className="mx-auto mt-10 flex max-w-3xl flex-wrap justify-center gap-2">
+              {useCases.map((u) => (
+                <span key={u} className="cursor-default rounded-full border border-white/[0.05] bg-white/[0.01] px-4 py-1.5 text-[11px] font-medium text-slate-300 transition duration-200 hover:border-violet-400/20 hover:bg-white/[0.03] hover:text-white">{u}</span>
+              ))}
+            </div>
+          </div>
+        </section>
 
-              <div className="mt-6 grid gap-3">
-                {[
-                  ["Broken glass near playground path", "Screenshot evidence submitted", "Serious", "text-rose-600"],
-                  ["Flooding near school crosswalk", "Needs careful verification", "Watch", "text-amber-600"],
-                  ["Road hazard by transit stop", "2 confirmations nearby", "Verified", "text-emerald-600"],
-                ].map(([title, meta, state, tone]) => (
-                  <div key={title} className="cs-landing__report-row grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl bg-slate-50 px-4 py-4">
-                    <MapPin className={`h-5 w-5 ${tone}`} />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-slate-950 sm:text-base">{title}</p>
-                      <p className="mt-1 text-xs text-slate-500">{meta}</p>
+        {/* ══ trust & safety ════════════════════════════════════ */}
+        <section id="safety" className="relative z-10 border-t border-white/[0.03] px-5 pb-32 pt-24"
+          style={{ background: "linear-gradient(180deg, rgba(4,0,14,0.95) 0%, rgba(2,0,8,1) 100%)" }}>
+          <div className="mx-auto max-w-[1000px]">
+            <div className="rounded-2xl border border-white/[0.04] bg-gradient-to-b from-white/[0.012] to-transparent p-8 backdrop-blur-sm shadow-[0_16px_48px_rgba(0,0,0,0.35)] md:p-10">
+              <div className="grid gap-10 lg:grid-cols-12 lg:items-center">
+                <div className="lg:col-span-7">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-cyan-400">CaseOps Ethics</span>
+                  <h2 className="mt-4 text-xl font-semibold tracking-tight text-white sm:text-2xl">Designed for conditions, hazards, and infrastructure</h2>
+                  <p className="mt-4 text-xs leading-relaxed text-slate-400 sm:text-sm">CivicSignal is dedicated purely to public conditions and hazard management. The platform does not profile individuals, track private citizens, or log personal identifiers. Risk and confidence scores remain strictly isolated so uncertain notifications are clearly highlighted for verification.</p>
+                </div>
+                <div className="grid gap-3 lg:col-span-5">
+                  {["Focuses on school-area concerns, road obstacles, and public crowding safety.",
+                    "Keeps risk assessments transparent using explainable, deterministic scoring indicators.",
+                    "Sensitive reports containing personal context are routed to moderator approval queues.",
+                  ].map((b, i) => (
+                    <div key={i} className="flex gap-3 rounded-lg border border-white/[0.02] bg-white/[0.004] p-4 transition hover:border-violet-500/10">
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" />
+                      <p className="text-[11px] font-medium leading-relaxed text-slate-300">{b}</p>
                     </div>
-                    <span className="rounded-full bg-slate-900 px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-white">{state}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="cs-landing__confidence mt-5 grid gap-3 rounded-xl bg-blue-50 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
-                <div>
-                  <p className="text-sm font-bold text-slate-950">Explainable confidence</p>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">Risk and confidence stay separate so urgent but uncertain reports are clearly labeled.</p>
-                </div>
-                <div className="rounded-xl bg-[#2454d6] px-4 py-3 text-center text-white">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-100">Confidence</p>
-                  <p className="text-3xl font-black">84</p>
+                  ))}
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section id="how-it-works" className="cs-landing__rest mx-auto grid max-w-[1360px] gap-6 px-5 py-8 md:px-8 lg:grid-cols-[0.9fr_1.1fr] lg:px-12">
-        <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm md:p-9">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-700">Why it exists</p>
-          <h2 className="mt-4 text-3xl font-black tracking-[-0.04em] text-slate-950 md:text-4xl">Civic problems are visible, but the signals are scattered.</h2>
-          <p className="mt-5 text-base leading-8 text-slate-600">{APP_DESCRIPTION}</p>
-          <div className="mt-7 grid gap-4">
-            {[
-              ["Report", "Residents publish a hazard title, location, description, and photo or screenshot evidence."],
-              ["Verify", "Community confirmations and public signals help separate real issues from false alarms."],
-              ["Prioritize", "The map highlights dangerous areas so people can avoid them and responders can act faster."],
-            ].map(([title, body]) => (
-              <div key={title} className="rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
-                <p className="font-bold text-slate-950">{title}</p>
-                <p className="mt-2 text-sm leading-7 text-slate-600">{body}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid gap-6">
-          <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm md:p-9">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="h-5 w-5 text-blue-700" />
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-700">How CivicSignal works</p>
-            </div>
-            <div className="mt-6 grid gap-3">
-              {[
-                "Someone witnesses a hazard and submits a place-based report with evidence.",
-                "CivicSignal captures category, location, time, confidence, and supporting context.",
-                "Related reports and public signals are grouped into a map cluster.",
-                "The system scores risk and confidence with explainable factors.",
-                "Residents, moderators, and civic responders verify, resolve, or update the issue.",
-              ].map((step, index) => (
-                <div key={step} className="grid grid-cols-[auto_1fr] gap-4 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#2454d6] text-sm font-black text-white">{index + 1}</div>
-                  <p className="pt-1 text-sm leading-7 text-slate-700">{step}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm md:p-9">
-            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-700">Use cases</p>
-            <div className="mt-6 flex flex-wrap gap-3">
-              {useCases.map((item) => (
-                <span key={item} className="rounded-full border border-blue-100 bg-blue-50 px-4 py-2 text-sm font-semibold text-slate-700">
-                  {item}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="cs-landing__rest mx-auto max-w-[1360px] px-5 pb-10 md:px-8 lg:px-12">
-        <div className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm md:p-9">
-          <div className="grid gap-7 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-700">Trust and safety</p>
-              <h2 className="mt-4 text-3xl font-black tracking-[-0.04em] text-slate-950 md:text-4xl">Designed for places, hazards, and public conditions.</h2>
-              <p className="mt-5 text-base leading-8 text-slate-600">
-                CivicSignal does not score private people or make personal accusations. Reports are shown with confidence, evidence, status, and moderation paths so people can see what is known, uncertain, and still needs verification.
-              </p>
-            </div>
-            <div className="grid gap-3">
-              {[
-                "Possible school-area concern reported near a public walkway. No private person is identified.",
-                "Multiple signals indicate crowding risk near the library entrance after an event.",
-                "High-risk or sensitive content can be held for moderator review before public display.",
-              ].map((item) => (
-                <div key={item} className="flex gap-3 rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
-                  <CheckCircle2 className="mt-1 h-5 w-5 text-emerald-600" />
-                  <p className="text-sm leading-7 text-slate-700">{item}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
+        </section>
       </main>
+
       {phase === "overlay" ? <LaunchOverlay /> : null}
     </div>
   );

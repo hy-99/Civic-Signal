@@ -1,6 +1,7 @@
 import { withMutableState } from "@/lib/data-store";
 import type { ModerationAction, ModerationFlag, Profile, Report, ReviewQueueItem } from "@/lib/types";
 import { applyClusterStatusToReportsInState } from "@/services/clusters";
+import { createIncidentCaseFromClusterInState, createIncidentCaseFromReportInState } from "@/services/cases";
 import { createId, nowIso } from "@/lib/utils";
 
 const sensitivePublicSpaceCategories = new Set<Report["category"]>([
@@ -134,6 +135,7 @@ export async function moderateItem(input: {
       if (input.action === "mark_false_alarm") report.status = "false_alarm";
       if (input.action === "mark_resolved") report.status = "resolved";
       if (input.action === "mark_duplicate") report.status = "duplicate";
+      if (input.action === "create_case") createIncidentCaseFromReportInState(state, report);
       report.updated_at = nowIso();
     }
 
@@ -157,6 +159,7 @@ export async function moderateItem(input: {
       if (input.action === "mark_in_progress") cluster.status = "in_progress";
       if (input.action === "mark_verified") cluster.status = "verified";
       if (input.action === "mark_active") cluster.status = "active";
+      if (input.action === "create_case") createIncidentCaseFromClusterInState(state, cluster);
       cluster.updated_at = nowIso();
       applyClusterStatusToReportsInState(state, cluster.id, cluster.status);
     }

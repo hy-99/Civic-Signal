@@ -1,6 +1,15 @@
 import { z } from "zod";
 
 import { CATEGORY_OPTIONS, CLUSTER_VOTE_TYPES, REPORT_STATUSES, REPORT_VOTE_TYPES, SOURCE_TYPES, URGENCY_OPTIONS } from "@/lib/constants";
+import { EVENT_NAMES } from "@/lib/events/types";
+
+const geoJsonPositionSchema = z.array(z.number()).min(2).max(3);
+const geoJsonGeometrySchema = z.union([
+  z.object({ type: z.literal("Point"), coordinates: geoJsonPositionSchema }),
+  z.object({ type: z.literal("LineString"), coordinates: z.array(geoJsonPositionSchema).min(2) }),
+  z.object({ type: z.literal("Polygon"), coordinates: z.array(z.array(geoJsonPositionSchema).min(4)).min(1) }),
+  z.object({ type: z.literal("MultiPolygon"), coordinates: z.array(z.array(z.array(geoJsonPositionSchema).min(4)).min(1)).min(1) }),
+]);
 
 export const loginSchema = z.object({
   email: z.string().email(),
@@ -27,6 +36,7 @@ export const reportCreateSchema = z
     longitude: z.number().min(-180).max(180).optional().nullable(),
     image_url: z.string().optional().nullable(),
     image_storage_path: z.string().optional().nullable(),
+    user_submitted_zone: geoJsonGeometrySchema.optional().nullable(),
     is_anonymous: z.boolean().default(false),
     agreed_to_accuracy: z.literal(true),
     image_analysis: z.object({}).passthrough().optional().nullable(),
@@ -94,4 +104,22 @@ export const manualSignalSchema = z.object({
   longitude: z.number().min(-180).max(180).optional().nullable(),
   address_text: z.string().max(160).optional().nullable(),
   published_at: z.string().datetime().optional().nullable(),
+});
+
+const csvParamSchema = z
+  .string()
+  .optional()
+  .transform((value) =>
+    value
+      ? value
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : [],
+  );
+
+export const eventStreamQuerySchema = z.object({
+  types: csvParamSchema.pipe(z.array(z.enum(EVENT_NAMES))).default([]),
+  categories: csvParamSchema.pipe(z.array(z.string().min(1))).default([]),
+  roles: csvParamSchema.pipe(z.array(z.string().min(1))).default([]),
 });

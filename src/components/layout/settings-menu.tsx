@@ -4,6 +4,8 @@ import { Monitor, Moon, RotateCcw, Settings, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { useSettings, type DistanceUnits, type ThemePreference } from "@/components/providers/settings-provider";
+import { CASEOPS_ROLE_MODES } from "@/lib/constants";
+import type { CaseOpsRoleMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const THEME_OPTIONS: { value: ThemePreference; label: string; Icon: typeof Sun }[] = [
@@ -17,12 +19,20 @@ const UNIT_OPTIONS: { value: DistanceUnits; label: string }[] = [
   { value: "imperial", label: "Miles" },
 ];
 
+const ROLE_LABELS: Record<CaseOpsRoleMode, string> = {
+  citizen: "Citizen",
+  police: "Police",
+  moderator: "Moderator",
+  government: "Government",
+  responder: "Responder",
+};
+
 export function SettingsMenu() {
   const [open, setOpen] = useState(false);
   const [resetState, setResetState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  const { theme, units, setTheme, setUnits } = useSettings();
+  const { theme, units, roleMode, setTheme, setUnits, setRoleMode } = useSettings();
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -74,6 +84,27 @@ export function SettingsMenu() {
             <h3>Settings</h3>
             <span>Demo</span>
           </div>
+
+          <section className="cs-settings__section">
+            <p className="cs-settings__label">CaseOps role mode</p>
+            <div className="cs-settings__seg cs-settings__seg--wrap" role="radiogroup" aria-label="CaseOps role mode">
+              {CASEOPS_ROLE_MODES.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={roleMode === value}
+                  onClick={() => setRoleMode(value)}
+                  className={cn("cs-settings__seg-btn", roleMode === value && "cs-settings__seg-btn--active")}
+                >
+                  {ROLE_LABELS[value]}
+                </button>
+              ))}
+            </div>
+            <p className="cs-settings__help">
+              Controls map layers and actions without opening a separate dashboard.
+            </p>
+          </section>
 
           <section className="cs-settings__section">
             <p className="cs-settings__label">Appearance</p>

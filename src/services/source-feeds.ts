@@ -1,51 +1,47 @@
 import { loadState, withMutableState } from "@/lib/data-store";
+import { bus } from "@/lib/events/bus";
 import type { SourceFeed } from "@/lib/types";
-import { createPublicSignal } from "@/services/signals";
 import { createId, nowIso } from "@/lib/utils";
+import { buildDefaultDemoFeeds, previewFeed, scanFeed, shouldSeedDefaultDemoFeeds } from "@/services/ingestion";
 
-function makeMockItems(feed: SourceFeed) {
-  const common = {
-    source_name: feed.name,
-    source_type: feed.source_type,
-    source_url: feed.url,
-    address_text: feed.default_city || "North Lake",
-    latitude: feed.default_latitude,
-    longitude: feed.default_longitude,
-  };
+async function ensureDefaultSourceFeeds() {
+  if (!shouldSeedDefaultDemoFeeds()) return;
 
-  if (feed.source_type === "weather") {
-    return [
-      {
-        ...common,
-        title: "High wind advisory across the North Lake corridor",
-        text: "Wind gusts may affect trees, overhead lines, and visibility through tonight.",
-        category: "weather_damage" as const,
-      },
-    ];
-  }
+  const state = await loadState();
+  const defaults = buildDefaultDemoFeeds();
+  const missing = defaults.filter((defaultFeed) => !state.source_feeds.some((feed) => feed.url === defaultFeed.url));
+  const legacyMocks = state.source_feeds.filter((feed) => feed.url.includes("example.org") && feed.is_active);
 
-  if (feed.source_type === "traffic" || feed.source_type === "city_alert") {
-    return [
-      {
-        ...common,
-        title: "Library event crowd guidance",
-        text: "Event staff requested that attendees keep the public entrance and accessible path clear.",
-        category: "crowd_safety" as const,
-      },
-    ];
-  }
+  if (!missing.length && !legacyMocks.length) return;
 
-  return [
-    {
-      ...common,
-      title: `Mock scan from ${feed.name}`,
-      text: "This demo signal represents a place-based public-space condition imported through the feed admin shell.",
-      category: "school_area_concern" as const,
-    },
-  ];
+  await withMutableState((draft) => {
+    const timestamp = nowIso();
+
+    for (const feed of draft.source_feeds) {
+      if (feed.url.includes("example.org") && feed.is_active) {
+        feed.is_active = false;
+        feed.updated_at = timestamp;
+      }
+    }
+
+    for (const defaultFeed of defaults) {
+      if (draft.source_feeds.some((feed) => feed.url === defaultFeed.url)) continue;
+      draft.source_feeds.push({
+        ...defaultFeed,
+        id: createId(),
+        is_active: true,
+        last_checked_at: null,
+        last_success_at: null,
+        last_error: null,
+        created_at: timestamp,
+        updated_at: timestamp,
+      });
+    }
+  });
 }
 
 export async function getSourceFeeds() {
+  await ensureDefaultSourceFeeds();
   const state = await loadState();
   return state.source_feeds.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -61,6 +57,7 @@ type CreateSourceFeedInput = Omit<
 
 export async function createSourceFeed(input: CreateSourceFeedInput) {
   return withMutableState((state) => {
+    const timestamp = nowIso();
     const feed: SourceFeed = {
       ...input,
       default_city: input.default_city ?? null,
@@ -70,8 +67,8 @@ export async function createSourceFeed(input: CreateSourceFeedInput) {
       last_checked_at: null,
       last_success_at: null,
       last_error: null,
-      created_at: nowIso(),
-      updated_at: nowIso(),
+      created_at: timestamp,
+      updated_at: timestamp,
     };
     state.source_feeds.push(feed);
     return feed;
@@ -99,39 +96,32 @@ export async function parseFeedItems(raw: unknown) {
   return Array.isArray(raw) ? raw : [];
 }
 
-export async function importFeedItems(items: Array<Parameters<typeof createPublicSignal>[0]>) {
-  const imported = [];
-  for (const item of items) {
-    imported.push(await createPublicSignal(item));
-  }
-  return imported;
-}
-
 export async function testSourceFeed(id: string) {
+  await ensureDefaultSourceFeeds();
   const state = await loadState();
   const feed = state.source_feeds.find((item) => item.id === id);
   if (!feed) throw new Error("Source feed not found.");
-  return {
-    feed,
-    preview_items: makeMockItems(feed),
-    mode: "mock_scan",
-  };
+  return previewFeed(feed);
 }
 
 export async function scanSourceFeed(id: string) {
+  await ensureDefaultSourceFeeds();
   const state = await loadState();
   const feed = state.source_feeds.find((item) => item.id === id);
   if (!feed) throw new Error("Source feed not found.");
-  const items = makeMockItems(feed);
-  const imported = await importFeedItems(items);
-  await updateSourceFeed(id, {
-    last_checked_at: nowIso(),
-    last_success_at: nowIso(),
-    last_error: null,
-  });
-  return {
-    imported_count: imported.length,
-    items: imported,
-    mode: "mock_scan",
+
+  const result = await scanFeed(feed);
+  const timestamp = nowIso();
+  const updates: Partial<SourceFeed> = {
+    last_checked_at: timestamp,
+    last_error: result.errors[0] || null,
   };
+
+  if (!result.errors.length) {
+    updates.last_success_at = timestamp;
+  }
+
+  await updateSourceFeed(id, updates);
+  bus.emit({ type: "feed.scanned", feed_id: feed.id, items_added: result.imported_count });
+  return result;
 }

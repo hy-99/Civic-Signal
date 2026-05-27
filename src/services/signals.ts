@@ -1,5 +1,8 @@
 import { loadState, withMutableState } from "@/lib/data-store";
+import { bus } from "@/lib/events/bus";
+import { buildSignalLifecycleEvents } from "@/lib/events/domain";
 import type { MapFilters, PublicSignal, PublicSignalView, SourceFeed } from "@/lib/types";
+import { buildSignalEmbeddingText, getTextEmbedding } from "@/services/embeddings";
 import { classifyPublicSignal } from "@/services/ai";
 import { linkSignalToClusterInState, recalculateClusterInState } from "@/services/clusters";
 import { geocodeAddress } from "@/services/geocoding";
@@ -17,11 +20,11 @@ function buildSignalView(state: Awaited<ReturnType<typeof loadState>>, signal: P
 
 function trustedSource(feed: SourceFeed | null, signal: PublicSignal) {
   if (feed && feed.trust_level >= 70) return true;
-  return ["city_alert", "weather", "traffic"].includes(signal.source_type);
+  return ["city_alert", "weather", "traffic", "usgs", "nws", "open_meteo"].includes(signal.source_type);
 }
 
 export async function createPublicSignal(
-  input: Pick<PublicSignal, "title" | "text" | "source_name" | "source_type" | "source_url" | "category" | "address_text"> & {
+  input: Pick<PublicSignal, "title" | "text" | "source_name" | "source_type" | "source_url" | "category" | "address_text" | "external_id"> & {
     source_feed_id?: string | null;
     latitude?: number | null;
     longitude?: number | null;
@@ -42,15 +45,31 @@ export async function createPublicSignal(
     category: input.category,
     source_name: input.source_name,
   });
+  const embedding = await getTextEmbedding(
+    buildSignalEmbeddingText({
+      title: input.title,
+      text: input.text || null,
+      category: input.category,
+    }),
+  );
 
   return withMutableState(async (state) => {
+    if (input.external_id && input.source_feed_id) {
+      const existing = state.public_signals.find(
+        (item) => item.source_feed_id === input.source_feed_id && item.external_id === input.external_id,
+      );
+      if (existing) {
+        return buildSignalView(state, existing);
+      }
+    }
+
     const signal: PublicSignal = {
       id: createId(),
       source_feed_id: input.source_feed_id || null,
       source_name: input.source_name,
       source_type: input.source_type,
       source_url: input.source_url || null,
-      external_id: null,
+      external_id: input.external_id ?? null,
       title: input.title,
       text: input.text || null,
       category: input.category,
@@ -61,6 +80,7 @@ export async function createPublicSignal(
       published_at: input.published_at || nowIso(),
       risk_score: 0,
       confidence_score: 0,
+      embedding,
       analysis_summary: null,
       analysis_json: {
         score_breakdown: {
@@ -102,6 +122,9 @@ export async function createPublicSignal(
     if (signal.cluster_id) {
       signal.status = "matched";
       await recalculateClusterInState(state, signal.cluster_id);
+    }
+    for (const event of buildSignalLifecycleEvents(signal)) {
+      bus.emit(event);
     }
     return buildSignalView(state, signal);
   });

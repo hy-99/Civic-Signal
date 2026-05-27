@@ -6,7 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Map, Marker, StyleSpecification } from "maplibre-gl";
 
 import { CATEGORY_CONFIG, DEFAULT_COORDS } from "@/lib/constants";
-import type { RiskClusterView, RiskLevel } from "@/lib/types";
+import type { DangerZone, GeoJsonGeometry, RiskClusterView, RiskLevel } from "@/lib/types";
 import { CategoryIcon } from "@/components/shared/badges";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +23,7 @@ export type FocusLocation = {
 
 type RealMapProps = {
   clusters: RiskClusterView[];
+  zones?: DangerZone[];
   selectedId: string | null;
   audience?: MapAudience;
   focusLocation?: FocusLocation | null;
@@ -47,14 +48,17 @@ function verifiedGlowColor(risk: RiskLevel) {
 }
 
 function createFallbackStyle(): StyleSpecification {
+  const satelliteTileUrl = process.env.NEXT_PUBLIC_SATELLITE_TILE_URL;
+  const terrainTileUrl = process.env.NEXT_PUBLIC_TERRAIN_TILE_URL;
+  const tileUrl = satelliteTileUrl || terrainTileUrl || "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
   return {
     version: 8,
     sources: {
       osm: {
         type: "raster",
-        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tiles: [tileUrl],
         tileSize: 256,
-        attribution: "© OpenStreetMap contributors",
+        attribution: satelliteTileUrl || terrainTileUrl ? "Map imagery source configured by deployment" : "© OpenStreetMap contributors",
       },
     },
     layers: [
@@ -64,6 +68,39 @@ function createFallbackStyle(): StyleSpecification {
         source: "osm",
       },
     ],
+  };
+}
+
+function zoneColor(zone: DangerZone) {
+  const label = `${zone.label} ${zone.instructions || ""}`.toLowerCase();
+  if (zone.type === "official_active_zone" || zone.type === "official_predicted_zone") {
+    if (/(storm|weather|rain|flood|tsunami|hail|wind)/.test(label)) return "#2563eb";
+    if (/(smoke|fire|wildfire|heat|air quality)/.test(label)) return zone.type === "official_predicted_zone" ? "#f97316" : "#ef4444";
+    if (/(medical|violence|threat|police|crime|disturbance|crowd)/.test(label)) return "#7c3aed";
+    if (/(road|traffic|closure|blocked|infrastructure)/.test(label)) return "#f59e0b";
+  }
+  if (zone.type === "official_active_zone") return "#ef4444";
+  if (zone.type === "official_predicted_zone") return "#f59e0b";
+  if (zone.type === "safe_zone" || zone.type === "shelter_area") return "#10b981";
+  if (zone.type === "evacuation_route" || zone.type === "road_closure") return "#2563eb";
+  return "#64748b";
+}
+
+function zoneFeatures(zones: DangerZone[]) {
+  return {
+    type: "FeatureCollection" as const,
+    features: zones.map((zone) => ({
+      type: "Feature" as const,
+      id: zone.id,
+      properties: {
+        id: zone.id,
+        label: zone.label,
+        zoneType: zone.type,
+        color: zoneColor(zone),
+        line: zone.geometry.type === "LineString",
+      },
+      geometry: zone.geometry as GeoJsonGeometry,
+    })),
   };
 }
 
@@ -148,6 +185,7 @@ function buildPopupHtml(cluster: RiskClusterView, audience: MapAudience) {
 
 function RasterTileMap({
   clusters,
+  zones = [],
   selectedId,
   audience,
   onSelect,
@@ -262,6 +300,30 @@ function RasterTileMap({
         );
       })}
 
+      {zones
+        .filter((zone) => zone.geometry.type === "Polygon")
+        .slice(0, 8)
+        .map((zone) => {
+          const ring = zone.geometry.type === "Polygon" ? zone.geometry.coordinates[0] : [];
+          const avg = ring.reduce(
+            (total, coord) => ({ lng: total.lng + coord[0], lat: total.lat + coord[1] }),
+            { lng: 0, lat: 0 },
+          );
+          const centerLngPoint = ring.length ? avg.lng / ring.length : centerLng;
+          const centerLatPoint = ring.length ? avg.lat / ring.length : centerLat;
+          const point = worldPoint(centerLngPoint, centerLatPoint, zoom);
+          const left = point.x - center.x + size.width / 2;
+          const top = point.y - center.y + size.height / 2;
+          return (
+            <div
+              key={zone.id}
+              className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-white/10 shadow-[0_0_28px_rgba(15,23,42,0.14)]"
+              style={{ left, top, width: 130, height: 90, borderColor: zoneColor(zone), backgroundColor: `${zoneColor(zone)}22` }}
+              title={zone.label}
+            />
+          );
+        })}
+
       <div className="absolute right-3 top-3 grid overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
         <button 
           type="button" 
@@ -301,7 +363,7 @@ function wrappedTileX(tileX: number, zoom: number) {
 }
 
 
-export function RealMap({ clusters, selectedId, audience = "citizen", focusLocation, onSelect, onUnavailable }: RealMapProps) {
+export function RealMap({ clusters, zones = [], selectedId, audience = "citizen", focusLocation, onSelect, onUnavailable }: RealMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
   const markersRef = useRef<Marker[]>([]);
@@ -396,6 +458,54 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const data = zoneFeatures(zones);
+    const source = map.getSource("caseops-zones") as { setData?: (next: ReturnType<typeof zoneFeatures>) => void } | undefined;
+    if (source?.setData) {
+      source.setData(data);
+      return;
+    }
+    map.addSource("caseops-zones", {
+      type: "geojson",
+      data,
+    });
+    map.addLayer({
+      id: "caseops-zone-fill",
+      type: "fill",
+      source: "caseops-zones",
+      filter: ["!=", ["get", "line"], true],
+      paint: {
+        "fill-color": ["get", "color"],
+        "fill-opacity": audience === "citizen" ? 0.13 : 0.2,
+      },
+    });
+    map.addLayer({
+      id: "caseops-zone-outline",
+      type: "line",
+      source: "caseops-zones",
+      filter: ["!=", ["get", "line"], true],
+      paint: {
+        "line-color": ["get", "color"],
+        "line-width": 2.2,
+        "line-opacity": 0.82,
+      },
+    });
+    map.addLayer({
+      id: "caseops-zone-route",
+      type: "line",
+      source: "caseops-zones",
+      filter: ["==", ["get", "line"], true],
+      paint: {
+        "line-color": ["get", "color"],
+        "line-width": 4,
+        "line-opacity": 0.76,
+        "line-dasharray": [1, 1.1],
+      },
+    });
+  }, [audience, status, zones]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !maplibre || status === "error") return;
 
     const previousRoots = rootsRef.current;
@@ -475,7 +585,7 @@ export function RealMap({ clusters, selectedId, audience = "citizen", focusLocat
   }, [focusLocation, status]);
 
   if (status === "error") {
-    return <RasterTileMap clusters={clusters} selectedId={selectedId} audience={audience} onSelect={onSelect} />;
+    return <RasterTileMap clusters={clusters} zones={zones} selectedId={selectedId} audience={audience} onSelect={onSelect} />;
   }
 
   return (

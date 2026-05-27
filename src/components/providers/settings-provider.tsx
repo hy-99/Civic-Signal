@@ -9,6 +9,10 @@ import {
   useState,
 } from "react";
 
+import type { CaseOpsRoleMode } from "@/lib/types";
+
+const ROLE_MODES: CaseOpsRoleMode[] = ["citizen", "police", "government"];
+
 export type ThemePreference = "light" | "dark" | "system";
 export type DistanceUnits = "metric" | "imperial";
 
@@ -17,17 +21,20 @@ const STORAGE_KEY = "cs-settings-v1";
 type SettingsState = {
   theme: ThemePreference;
   units: DistanceUnits;
+  roleMode: CaseOpsRoleMode;
 };
 
 type SettingsContextValue = SettingsState & {
   effectiveTheme: "light" | "dark";
   setTheme: (next: ThemePreference) => void;
   setUnits: (next: DistanceUnits) => void;
+  setRoleMode: (next: CaseOpsRoleMode) => void;
 };
 
 const DEFAULTS: SettingsState = {
   theme: "light",
   units: "metric",
+  roleMode: "citizen",
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -40,9 +47,11 @@ function readStoredSettings(): SettingsState {
     if (!raw) return DEFAULTS;
 
     const parsed = JSON.parse(raw) as Partial<SettingsState>;
+    const storedRole = parsed.roleMode ?? DEFAULTS.roleMode;
     return {
       theme: parsed.theme ?? DEFAULTS.theme,
       units: parsed.units ?? DEFAULTS.units,
+      roleMode: ROLE_MODES.includes(storedRole) ? storedRole : DEFAULTS.roleMode,
     };
   } catch {
     return DEFAULTS;
@@ -89,9 +98,13 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     setState((current) => ({ ...current, units: next }));
   }, []);
 
+  const setRoleMode = useCallback((next: CaseOpsRoleMode) => {
+    setState((current) => ({ ...current, roleMode: next }));
+  }, []);
+
   const value = useMemo<SettingsContextValue>(
-    () => ({ ...state, effectiveTheme, setTheme, setUnits }),
-    [state, effectiveTheme, setTheme, setUnits],
+    () => ({ ...state, effectiveTheme, setTheme, setUnits, setRoleMode }),
+    [state, effectiveTheme, setTheme, setUnits, setRoleMode],
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
@@ -103,9 +116,11 @@ export function useSettings() {
     return {
       theme: DEFAULTS.theme,
       units: DEFAULTS.units,
+      roleMode: DEFAULTS.roleMode,
       effectiveTheme: "light" as const,
       setTheme: () => {},
       setUnits: () => {},
+      setRoleMode: () => {},
     };
   }
   return ctx;

@@ -802,6 +802,10 @@ img {
   border-radius: 10px;
 }
 
+.cs-settings__seg--wrap {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .cs-settings__seg-btn {
   display: inline-flex;
   align-items: center;
@@ -2009,4 +2013,76 @@ a.cs-notif__row:hover {
     opacity: 1;
     transform: none;
   }
+}
+
+/* ── CivicSignal Black-Hole / Accretion-Disk Keyframes ────────────── */
+
+/* Nebula breathing: each layer drifts and brightens at its own pace */
+@keyframes cs-nebula-1 {
+  0%, 100% { transform: translate(-50%, 0%) scale(1);   opacity: 0.50; }
+  33%      { transform: translate(-50%, -1%) scale(1.04); opacity: 0.68; }
+  66%      { transform: translate(-50%, 0.5%) scale(1.02); opacity: 0.55; }
+}
+
+@keyframes cs-nebula-2 {
+  0%, 100% { transform: translate(-50%, 0%) scale(1);   opacity: 0.45; }
+  50%      { transform: translate(-50%, 0.7%) scale(1.03); opacity: 0.65; }
+}
+
+@keyframes cs-nebula-3 {
+  0%, 100% { transform: translate(-50%, 0%) scale(1);   opacity: 0.55; }
+  40%      { transform: translate(-50%, -0.6%) scale(1.05); opacity: 0.78; }
+  80%      { transform: translate(-50%, 0.3%) scale(1.01); opacity: 0.6; }
+}
+
+/* Arc-rim glow breathing (the big box-shadow composite) */
+@keyframes cs-arc-breathe {
+  0%, 100% { opacity: 1;    transform: scaleX(1);    }
+  50%      { opacity: 0.82; transform: scaleX(1.008); }
+}
+
+/* Hot white core pulsing */
+@keyframes cs-core-pulse {
+  0%, 100% { opacity: 0.88; transform: translate(-50%, 0) scaleX(1);    }
+  50%      { opacity: 1;    transform: translate(-50%, 0) scaleX(1.05); }
+}
+
+/* Horizontal light sweep that crosses the arc */
+@keyframes cs-sweep {
+  0%   { transform: translateX(-280%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateX(280%); opacity: 0; }
+}
+
+/* Star twinkle variants (different peak opacities & rhythms) */
+@keyframes cs-twinkle-a {
+  0%, 100% { opacity: 0.12; }
+  50%      { opacity: 0.6;  }
+}
+@keyframes cs-twinkle-b {
+  0%, 100% { opacity: 0.2; }
+  45%      { opacity: 0.7; }
+}
+@keyframes cs-twinkle-c {
+  0%, 100% { opacity: 0.08; }
+  55%      { opacity: 0.5;  }
+}
+
+/* Particle micro-drift (subtle wobble for dots along the arc) */
+@keyframes cs-particle-drift {
+  0%, 100% { opacity: 0.35; transform: translate(0, 0); }
+  50%      { opacity: 0.75; transform: translate(1px, -2px); }
+}
+
+/* Lensing ring very slow rotation */
+@keyframes cs-lens-rotate {
+  from { transform: translate(-50%, 0) rotate(0deg); }
+  to   { transform: translate(-50%, 0) rotate(360deg); }
+}
+
+/* Gentle ambient background luminance shift */
+@keyframes cs-ambient-shift {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 0.65; }
 }
