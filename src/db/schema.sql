@@ -218,7 +218,9 @@ create table if not exists danger_zones (
   case_id uuid references incident_cases(id) on delete cascade,
   report_id uuid references reports(id) on delete cascade,
   cluster_id uuid references risk_clusters(id) on delete cascade,
+  parent_cluster_id uuid references risk_clusters(id) on delete set null,
   type text not null,
+  mode text not null default 'manual',
   geometry jsonb not null,
   label text not null,
   severity integer default 0,
@@ -227,10 +229,17 @@ create table if not exists danger_zones (
   expires_at timestamptz,
   estimated_arrival_at timestamptz,
   instructions text,
+  approved_at timestamptz,
+  approved_by uuid references profiles(id) on delete set null,
   created_by_role text not null default 'system',
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+alter table danger_zones add column if not exists parent_cluster_id uuid references risk_clusters(id) on delete set null;
+alter table danger_zones add column if not exists mode text not null default 'manual';
+alter table danger_zones add column if not exists approved_at timestamptz;
+alter table danger_zones add column if not exists approved_by uuid references profiles(id) on delete set null;
 
 create table if not exists case_events (
   id uuid primary key default gen_random_uuid(),

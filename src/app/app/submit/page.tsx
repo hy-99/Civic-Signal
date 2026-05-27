@@ -11,11 +11,12 @@ import { getDangerZones } from "@/services/zones";
 
 export default async function SubmitPage() {
   const viewer = await getCurrentViewer();
+  const includePrivateZones = viewer?.role === "moderator" || viewer?.role === "admin";
   const [clusters, reports, cases, zones, caseEvents] = await Promise.all([
     getRiskClusters({ sort: "urgent" }),
     getReports({ sort: "urgent", viewer }),
     getIncidentCases({ include_private: true }),
-    getDangerZones({ include_private: true }),
+    getDangerZones({ include_private: includePrivateZones }),
     getAllCaseEvents(),
   ]);
 

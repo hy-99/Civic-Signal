@@ -89,6 +89,7 @@ export type DangerZoneType =
   | "evacuation_route"
   | "road_closure"
   | "shelter_area";
+export type DangerZoneMode = "auto" | "predicted" | "ai_suggested" | "manual";
 export type CaseEventActorType =
   | "citizen"
   | "ai"
@@ -351,7 +352,9 @@ export interface DangerZone {
   case_id: string | null;
   report_id: string | null;
   cluster_id: string | null;
+  parent_cluster_id: string | null;
   type: DangerZoneType;
+  mode: DangerZoneMode;
   geometry: GeoJsonGeometry;
   label: string;
   severity: number;
@@ -360,6 +363,8 @@ export interface DangerZone {
   expires_at: string | null;
   estimated_arrival_at: string | null;
   instructions: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
   created_by_role: CaseOwnerRole | CaseOpsRoleMode;
   created_at: string;
   updated_at: string;

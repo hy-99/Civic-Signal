@@ -7,12 +7,13 @@ import { getDangerZones } from "@/services/zones";
 
 export default async function MapPage() {
   const viewer = await getCurrentViewer();
+  const includePrivateZones = viewer?.role === "moderator" || viewer?.role === "admin";
   const [clusters, reports, clusterStats, cases, zones, caseEvents] = await Promise.all([
     getRiskClusters({ sort: "urgent" }),
     getReports({ sort: "urgent", viewer, live_map: true }),
     getRiskClusterMapStats(),
     getIncidentCases({ include_private: true }),
-    getDangerZones({ include_private: true }),
+    getDangerZones({ include_private: includePrivateZones }),
     getAllCaseEvents(),
   ]);
 

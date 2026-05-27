@@ -181,9 +181,9 @@ test("zone mode inference maps current zone types into stream modes", () => {
   const zone = state.danger_zones[0];
   assert.ok(zone);
 
-  assert.equal(inferZoneMode({ ...zone, type: "official_active_zone" }), "manual");
-  assert.equal(inferZoneMode({ ...zone, type: "official_predicted_zone" }), "predicted");
-  assert.equal(inferZoneMode({ ...zone, type: "ai_suggested_zone" }), "ai_suggested");
+  assert.equal(inferZoneMode({ ...zone, type: "official_active_zone", mode: "manual" }), "manual");
+  assert.equal(inferZoneMode({ ...zone, type: "official_predicted_zone", mode: "predicted" }), "predicted");
+  assert.equal(inferZoneMode({ ...zone, type: "ai_suggested_zone", mode: "ai_suggested" }), "ai_suggested");
 });
 
 test("case status helper keeps old and new values", () => {

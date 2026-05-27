@@ -21,6 +21,7 @@ export function getEnv() {
     news_api_key: process.env.NEWS_API_KEY || "",
     geocoding_provider: process.env.GEOCODING_PROVIDER || "",
     geocoding_api_key: process.env.GEOCODING_API_KEY || "",
+    auto_approve_zones: process.env.AUTO_APPROVE_ZONES || "",
   };
 }
 
@@ -40,4 +41,11 @@ export function hasMapConfig() {
 
 export function hasGeminiConfig() {
   return Boolean(getEnv().gemini_api_key);
+}
+
+export function shouldAutoApproveZones() {
+  const value = getEnv().auto_approve_zones.trim().toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return isDemoMode();
 }

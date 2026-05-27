@@ -1,4 +1,4 @@
-import type { CaseEvent, DangerZone, IncidentCase, PublicSignal, Report, RiskCluster } from "@/lib/types";
+import type { CaseEvent, DangerZone, DangerZoneMode, IncidentCase, PublicSignal, Report, RiskCluster } from "@/lib/types";
 
 export type ClassificationResult = {
   extracted_location_text?: string | null;
@@ -12,7 +12,7 @@ export type AiTraceEvent = {
   [key: string]: unknown;
 };
 
-export type ZoneEventMode = "auto" | "predicted" | "ai_suggested" | "manual";
+export type ZoneEventMode = DangerZoneMode;
 
 export type CivicEvent =
   | { type: "report.created"; report: Report }

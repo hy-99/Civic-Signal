@@ -44,6 +44,7 @@ export function buildSignalLifecycleEvents(signal: PublicSignal) {
 }
 
 export function inferZoneMode(zone: DangerZone): ZoneEventMode {
+  if (zone.mode) return zone.mode;
   if (zone.type === "official_predicted_zone") return "predicted";
   if (zone.type === "ai_suggested_zone") return "ai_suggested";
   return "manual";

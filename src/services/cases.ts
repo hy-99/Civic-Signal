@@ -1,13 +1,15 @@
 import { CATEGORY_CONFIG } from "@/lib/constants";
 import { loadState, withMutableState } from "@/lib/data-store";
+import { shouldAutoApproveZones } from "@/lib/env";
 import { bus } from "@/lib/events/bus";
-import { buildCaseStatusChangedEvent, inferZoneMode } from "@/lib/events/domain";
+import { buildCaseStatusChangedEvent, inferZoneMode as inferZoneEventMode } from "@/lib/events/domain";
 import type {
   CaseEvent,
   CaseEventAction,
   CaseEventActorType,
   CaseOwnerRole,
   DangerZone,
+  DangerZoneMode,
   HazardType,
   IncidentCase,
   IncidentCaseStatus,
@@ -70,6 +72,33 @@ function polygonAround(lat: number, lng: number, radius = 0.0018) {
   };
 }
 
+function inferDangerZoneMode(type: DangerZone["type"], mode?: DangerZoneMode | null): DangerZoneMode {
+  if (mode) return mode;
+  if (type === "ai_suggested_zone") return "ai_suggested";
+  return "manual";
+}
+
+function approvalForZone(mode: DangerZoneMode, approved_at?: string | null, approved_by?: string | null) {
+  if (approved_at !== undefined) {
+    return {
+      approved_at,
+      approved_by: approved_at ? approved_by ?? null : null,
+    };
+  }
+
+  if (mode !== "manual" && !shouldAutoApproveZones()) {
+    return {
+      approved_at: null,
+      approved_by: null,
+    };
+  }
+
+  return {
+    approved_at: nowIso(),
+    approved_by: approved_by ?? null,
+  };
+}
+
 export function addCaseEventInState(
   state: CivicState,
   input: {
@@ -94,6 +123,23 @@ export function addCaseEventInState(
   state.case_events.push(event);
   bus.emit({ type: "case.event_added", case_id: input.case_id, event });
   return event;
+}
+
+export function syncIncidentWithZoneInState(state: CivicState, zone: DangerZone) {
+  if (!zone.case_id || !zone.approved_at) return;
+  const incident = state.incident_cases.find((item) => item.id === zone.case_id);
+  if (!incident) return;
+
+  if (zone.type === "official_active_zone") {
+    incident.active_zone = zone.geometry;
+  }
+
+  if (zone.type === "official_predicted_zone") {
+    const nextGeometry = JSON.stringify(zone.geometry);
+    incident.predicted_zones = [...incident.predicted_zones.filter((item) => JSON.stringify(item) !== nextGeometry), zone.geometry];
+  }
+
+  incident.updated_at = nowIso();
 }
 
 function buildCaseFromReport(report: Report, triage?: CaseTriageResult | null): IncidentCase {
@@ -389,31 +435,32 @@ export async function addCaseEvent(input: Parameters<typeof addCaseEventInState>
 
 export function createDangerZoneForCaseInState(
   state: CivicState,
-  input: Omit<DangerZone, "id" | "created_at" | "updated_at">,
+  input: Omit<DangerZone, "id" | "created_at" | "updated_at" | "mode" | "approved_at" | "approved_by" | "parent_cluster_id"> &
+    Partial<Pick<DangerZone, "mode" | "approved_at" | "approved_by" | "parent_cluster_id">>,
 ) {
   const now = nowIso();
+  const mode = inferDangerZoneMode(input.type, input.mode);
+  const approval = approvalForZone(mode, input.approved_at, input.approved_by);
   const zone: DangerZone = {
     ...input,
+    parent_cluster_id: input.parent_cluster_id ?? input.cluster_id ?? null,
+    mode,
+    ...approval,
     id: createId(),
     created_at: now,
     updated_at: now,
   };
   state.danger_zones.push(zone);
-  bus.emit({ type: "zone.computed", zone, mode: inferZoneMode(zone) });
-  if (zone.case_id) {
-    const incident = state.incident_cases.find((item) => item.id === zone.case_id);
-    if (incident) {
-      if (zone.type === "official_active_zone") incident.active_zone = zone.geometry;
-      if (zone.type === "official_predicted_zone") incident.predicted_zones = [...incident.predicted_zones, zone.geometry];
-      incident.updated_at = now;
-      addCaseEventInState(state, {
-        case_id: incident.id,
-        actor_type: "government",
-        action: zone.type === "official_predicted_zone" ? "predicted_zone_changed" : "danger_zone_changed",
-        summary: `${zone.label} published as ${zone.type.replace(/_/g, " ")}.`,
-        metadata: { zone_id: zone.id, zone_type: zone.type },
-      });
-    }
+  bus.emit({ type: "zone.computed", zone, mode: inferZoneEventMode(zone) });
+  syncIncidentWithZoneInState(state, zone);
+  if (zone.case_id && zone.approved_at) {
+    addCaseEventInState(state, {
+      case_id: zone.case_id,
+      actor_type: "government",
+      action: zone.type === "official_predicted_zone" ? "predicted_zone_changed" : "danger_zone_changed",
+      summary: `${zone.label} published as ${zone.type.replace(/_/g, " ")}.`,
+      metadata: { zone_id: zone.id, zone_type: zone.type },
+    });
   }
   return zone;
 }
